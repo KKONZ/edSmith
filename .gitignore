@@ -1,0 +1,53 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+
+# Distribution / packaging
+.eggs/
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Environment / secrets
+.env
+.env.*
+*.env
+
+# Jupyter notebooks — scratch_code.ipynb contains hardcoded secrets; never commit
+*.ipynb
+.ipynb_checkpoints/
+
+# Generated data
+*.parquet
+*.arrow
+
+# edsmith drive data (episodic records, model checkpoints — stays on Drive)
+drive/
+episodic/
+
+# Test / coverage artifacts
+.pytest_cache/
+.coverage
+htmlcov/
+coverage.xml
+
+# IDEs
+.vscode/
+.idea/
+*.iml
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
