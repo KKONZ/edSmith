@@ -1,10 +1,14 @@
 """edsmith MCP training server — runs inside a Colab GPU session.
 
+Based on the colab-mcp pattern (https://github.com/googlecolab/colab-mcp).
+Uses fastmcp 2.x with streamable-http transport to avoid HTTP/2 issues
+with Cloudflare tunnels.
+
 Setup in Colab (two cells):
 
 --- Cell 1: install & tunnel ---
-    !pip install -q "edsmith[training] @ git+https://github.com/kkonz/edSmith.git" mcp
-    !wget -q https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 \\
+    !pip install -q "edsmith[training] @ git+https://github.com/kkonz/edSmith.git" fastmcp
+    !wget -q https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 \
          -O cloudflared && chmod +x cloudflared
 
     import subprocess, re
@@ -18,7 +22,7 @@ Setup in Colab (two cells):
     for line in proc.stderr:
         m = re.search(r"https://[a-z0-9-]+\\.trycloudflare\\.com", line)
         if m:
-            print(f"\\nMCP URL: {m.group()}/sse\\n")
+            print(f"\\nMCP URL: {m.group()}/mcp\\n")
             break
 
 --- Cell 2: start server (blocking) ---
@@ -26,7 +30,7 @@ Setup in Colab (two cells):
     subprocess.run(["python", "-m", "edsmith.mcp.server"])
 
 Then on your local machine:
-    edsmith run-session --config session.yaml --mcp-url https://<tunnel-id>.trycloudflare.com/sse
+    edsmith run-session --config session.yaml --mcp-url https://<tunnel-id>.trycloudflare.com/mcp
 """
 
 from __future__ import annotations
@@ -34,17 +38,16 @@ from __future__ import annotations
 import asyncio
 import json
 from pathlib import Path
-from typing import Any
 
 import numpy as np
 import pandas as pd
 import torch
-from mcp.server.fastmcp import FastMCP
+from fastmcp import FastMCP
 
 from edsmith.data.parser import COMPONENT_HEADINGS
 from edsmith.metrics import compute_all
 
-mcp = FastMCP("edsmith-training", json_response=True)
+mcp = FastMCP("edsmith-training")
 
 # IELTS component band values — ordinal classes for CORN
 _BANDS: list[float] = [b / 2 for b in range(2, 19)]  # 1.0 … 9.0  (17 values)
@@ -59,7 +62,7 @@ _BAND_TO_IDX: dict[float, int] = {b: i for i, b in enumerate(_BANDS)}
 @mcp.tool()
 async def train_scorer(
     feedback_data: str,
-    scorer_config: str,  # JSON-encoded ScorerConfig.model_dump()
+    scorer_config: str,
     output_dir: str,
 ) -> str:
     """Fine-tune the Scorer (Qwen3 + LoRA + CORN loss) on Phase 1 feedback.
@@ -73,7 +76,7 @@ async def train_scorer(
     Returns:
         JSON string {"model_path": str}.
     """
-    import base64, io, os, tempfile
+    import base64, os, tempfile
     raw = base64.b64decode(feedback_data)
     with tempfile.NamedTemporaryFile(suffix=".parquet", delete=False) as f:
         f.write(raw)
@@ -125,15 +128,7 @@ async def evaluate_scorer(
 
 @mcp.tool()
 def compute_metrics(y_true: list[float], y_pred: list[float]) -> dict[str, float]:
-    """Compute accuracy, adjacent_accuracy, QWK, and SMD.
-
-    Args:
-        y_true: Ground-truth band scores.
-        y_pred: Predicted band scores.
-
-    Returns:
-        Dict with keys: accuracy, adjacent_accuracy, qwk, smd.
-    """
+    """Compute accuracy, adjacent_accuracy, QWK, and SMD."""
     return compute_all(y_true, y_pred, bands=_BANDS)
 
 
@@ -148,7 +143,6 @@ def _train(feedback_path: str, cfg: dict, output_dir: str) -> str:
 
     df = pd.read_parquet(feedback_path)
     df = df.dropna(subset=["score"])
-
     df["label"] = df["score"].map(_BAND_TO_IDX)
     df = df.dropna(subset=["label"])
     df["label"] = df["label"].astype(int)
@@ -167,15 +161,14 @@ def _train(feedback_path: str, cfg: dict, output_dir: str) -> str:
         bias="none",
     )
 
-    # CORN classification head attached to the model so the Trainer can see it
-    model.corn_head = torch.nn.Linear(model.config.hidden_size, _NUM_CLASSES - 1).to(model.device)
+    corn_head = torch.nn.Linear(model.config.hidden_size, _NUM_CLASSES - 1).to(model.device)
 
     class _CORNTrainer(Trainer):
         def compute_loss(self, model, inputs, return_outputs=False, **kwargs):
             labels = inputs.pop("labels")
             outputs = model(**inputs, output_hidden_states=True)
             last_hidden = outputs.hidden_states[-1][:, -1, :]
-            logits = model.corn_head(last_hidden)
+            logits = corn_head(last_hidden)
             loss = corn_loss(logits, labels, num_classes=_NUM_CLASSES)
             return (loss, outputs) if return_outputs else loss
 
@@ -202,9 +195,7 @@ def _train(feedback_path: str, cfg: dict, output_dir: str) -> str:
     out.mkdir(parents=True, exist_ok=True)
     model.save_pretrained(str(out))
     tokenizer.save_pretrained(str(out))
-
-    # Save classifier head separately (not part of the PEFT model)
-    torch.save(classifier.state_dict(), str(out / "classifier.pt"))
+    torch.save(corn_head.state_dict(), str(out / "corn_head.pt"))
 
     return str(out)
 
@@ -226,13 +217,13 @@ def _evaluate(model_path: str, eval_data_path: str) -> tuple[list[float], list[f
     )
 
     hidden_size = model.config.hidden_size
-    classifier = torch.nn.Linear(hidden_size, _NUM_CLASSES - 1).to(model.device)
-    classifier.load_state_dict(
-        torch.load(str(Path(model_path) / "classifier.pt"), map_location=model.device)
+    corn_head = torch.nn.Linear(hidden_size, _NUM_CLASSES - 1).to(model.device)
+    corn_head.load_state_dict(
+        torch.load(str(Path(model_path) / "corn_head.pt"), map_location=model.device)
     )
 
     model.eval()
-    classifier.eval()
+    corn_head.eval()
 
     y_true: list[float] = []
     y_pred: list[float] = []
@@ -251,11 +242,10 @@ def _evaluate(model_path: str, eval_data_path: str) -> tuple[list[float], list[f
 
                 out = model(**enc, output_hidden_states=True)
                 last_hidden = out.hidden_states[-1][:, -1, :]
-                logits = classifier(last_hidden)
+                logits = corn_head(last_hidden)
                 idx = int(corn_label_from_logits(logits).item())
                 component_preds.append(_BANDS[min(idx, len(_BANDS) - 1)])
 
-            # Overall band = mean of four component predictions, rounded to 0.5
             pred_band = round(float(np.mean(component_preds)) * 2) / 2
             y_true.append(float(row["band"]))
             y_pred.append(pred_band)
@@ -306,4 +296,4 @@ def _format_input(question: str, essay: str, component: str) -> str:
 # ------------------------------------------------------------------
 
 if __name__ == "__main__":
-    mcp.run(transport="sse")
+    mcp.run(transport="http", port=8000)

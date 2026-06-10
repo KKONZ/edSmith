@@ -3,7 +3,7 @@
 Usage:
     from edsmith.mcp.client import MCPClient
 
-    client = MCPClient("https://<tunnel-id>.trycloudflare.com/sse")
+    client = MCPClient("https://<tunnel-id>.trycloudflare.com/mcp")
     orchestrator = Orchestrator(
         ...
         trainer_fn=client.trainer_fn,
@@ -11,7 +11,7 @@ Usage:
     )
 
 Or via CLI:
-    edsmith run-session --config session.yaml --mcp-url https://<tunnel-id>.trycloudflare.com/sse
+    edsmith run-session --config session.yaml --mcp-url https://<tunnel-id>.trycloudflare.com/mcp
 """
 
 from __future__ import annotations
@@ -23,8 +23,7 @@ import json
 from typing import Callable
 
 import pandas as pd
-from mcp import ClientSession, types
-from mcp.client.sse import sse_client
+from fastmcp import Client
 
 
 def _df_to_b64(df: pd.DataFrame) -> str:
@@ -36,12 +35,15 @@ def _df_to_b64(df: pd.DataFrame) -> str:
 class MCPClient:
     """Thin wrapper around the edsmith-training MCP server.
 
+    Uses fastmcp.Client with streamable-http transport — no SSE, no HTTP/2
+    connection-reuse issues with Cloudflare tunnels.
+
     DataFrames are serialised to base64-encoded parquet and sent inline so
-    the server never needs to access the local filesystem.
+    the Colab server never needs to access the local filesystem.
     """
 
     def __init__(self, server_url: str) -> None:
-        self._url = server_url
+        self._url = server_url  # e.g. https://abc123.trycloudflare.com/mcp
 
     # ------------------------------------------------------------------
     # Public callables
@@ -78,7 +80,7 @@ class MCPClient:
         scorer_config,
         output_dir: str,
     ) -> str:
-        result_json = await self._call_tool(
+        result_text = await self._call_tool(
             "train_scorer",
             {
                 "feedback_data": _df_to_b64(feedback_df),
@@ -86,21 +88,21 @@ class MCPClient:
                 "output_dir": output_dir,
             },
         )
-        return json.loads(result_json)["model_path"]
+        return json.loads(result_text)["model_path"]
 
     async def _aevaluate(
         self,
         model_path: str,
         df: pd.DataFrame,
     ) -> tuple[list[float], list[float]]:
-        result_json = await self._call_tool(
+        result_text = await self._call_tool(
             "evaluate_scorer",
             {
                 "model_path": model_path,
                 "eval_data": _df_to_b64(df),
             },
         )
-        result = json.loads(result_json)
+        result = json.loads(result_text)
         return result["y_true"], result["y_pred"]
 
     # ------------------------------------------------------------------
@@ -108,11 +110,9 @@ class MCPClient:
     # ------------------------------------------------------------------
 
     async def _call_tool(self, name: str, arguments: dict) -> str:
-        async with sse_client(self._url) as (read, write):
-            async with ClientSession(read, write) as session:
-                await session.initialize()
-                result = await session.call_tool(name, arguments=arguments)
-                for content in result.content:
-                    if isinstance(content, types.TextContent):
-                        return content.text
-                raise RuntimeError(f"Tool {name!r} returned no text content")
+        async with Client(self._url) as client:
+            result = await client.call_tool(name, arguments)
+        for item in result:
+            if hasattr(item, "text"):
+                return item.text
+        raise RuntimeError(f"Tool {name!r} returned no text content")

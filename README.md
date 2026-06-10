@@ -26,7 +26,7 @@ Open a Colab notebook with a GPU runtime and run these two cells:
 
 *Cell 1 — install and start the tunnel:*
 ```python
-!pip install -q "edsmith[training] @ git+https://github.com/kkonz/edSmith.git" mcp
+!pip install -q "edsmith[training] @ git+https://github.com/kkonz/edSmith.git" fastmcp
 !wget -q https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 \
      -O cloudflared && chmod +x cloudflared
 
@@ -41,7 +41,7 @@ proc = subprocess.Popen(
 for line in proc.stderr:
     m = re.search(r"https://[a-z0-9-]+\.trycloudflare\.com", line)
     if m:
-        print(f"\nMCP URL: {m.group()}/sse\n")
+        print(f"\nMCP URL: {m.group()}/mcp\n")
         break
 ```
 
@@ -58,7 +58,7 @@ Copy the printed MCP URL. The URL is the only access control — keep it private
 Parses the original IELTS dataset into per-component scores and trains the Scorer on that data. Must be run before the first `run-session`.
 
 ```bash
-edsmith run-baseline --config session.yaml --mcp-url https://<id>.trycloudflare.com/sse
+edsmith run-baseline --config session.yaml --mcp-url https://<id>.trycloudflare.com/mcp
 ```
 
 The IELTS dataset downloads automatically from Hugging Face on first run.
@@ -68,7 +68,7 @@ The IELTS dataset downloads automatically from Hugging Face on first run.
 Back in your local terminal:
 
 ```bash
-edsmith run-session --config session.yaml --mcp-url https://<id>.trycloudflare.com/sse
+edsmith run-session --config session.yaml --mcp-url https://<id>.trycloudflare.com/mcp
 ```
 
 The IELTS dataset downloads automatically from Hugging Face on first run.
