@@ -11,11 +11,6 @@ COMPONENT_HEADINGS: dict[str, str] = {
     "grammar": "Grammatical Range and Accuracy",
 }
 
-_EXTRA_HEADINGS = {
-    "overall_feedback": ["Overall Band Score", "Feedback and Additional Comments"],
-    "suggestions": ["Suggestions for Enhancement"],
-}
-
 _VALID_SCORE_RANGE = (0.0, 9.0)
 
 
@@ -36,6 +31,15 @@ class ParsedEvaluation:
 # Score extraction
 # ------------------------------------------------------------------
 
+def _validated_score(raw: str) -> float | None:
+    try:
+        val = float(raw)
+    except ValueError:
+        return None
+    lo, hi = _VALID_SCORE_RANGE
+    return val if lo <= val <= hi else None
+
+
 def _extract_score_from_heading(heading: str) -> float | None:
     # [7] or [7.5]
     m = re.search(r"\[(\d+(?:\.\d+)?)\]", heading)
@@ -48,7 +52,6 @@ def _extract_score_from_heading(heading: str) -> float | None:
         return _validated_score(m.group(1))
 
     # **: 5.0  /  : 7.0  /  ** 7  — at end of heading or before a dash separator
-    # e.g. "**Task Achievement:** 5.0 - The candidate..."
     m = re.search(r"[:\*]\*?\s*(\d+(?:\.\d+)?)\s*(?:\*|\n|$|(?=\s*-))", heading)
     if m:
         return _validated_score(m.group(1))
@@ -56,52 +59,102 @@ def _extract_score_from_heading(heading: str) -> float | None:
     return None
 
 
-def _validated_score(raw: str) -> float | None:
-    try:
-        val = float(raw)
-    except ValueError:
-        return None
-    lo, hi = _VALID_SCORE_RANGE
-    return val if lo <= val <= hi else None
-
-
 # ------------------------------------------------------------------
-# Text cleaning
+# Section splitting (verbatim user logic)
 # ------------------------------------------------------------------
 
-def _clean_text(text: str) -> str:
-    lines = text.splitlines()
-    cleaned = []
-    for line in lines:
-        line = re.sub(r"^[-*+•]\s*", "", line.lstrip(), count=1)
-        cleaned.append(line)
-    return "\n".join(cleaned).strip()
+def split_evaluation(eval_text):
+    sections = {}
 
+    heading_map = {
+        "task_response": "Task Achievement",
+        "coherence": "Coherence and Cohesion",
+        "lexical": "Lexical Resource",
+        "grammar": "Grammatical Range and Accuracy"
+    }
 
-# ------------------------------------------------------------------
-# Heading pattern — one regex per label so each ^ anchor is independent
-# ------------------------------------------------------------------
+    # Helper function to clean leading bullet points from each line
+    def _clean_bullet_points(text):
+        lines = text.splitlines()
+        cleaned_lines = []
+        for line in lines:
+            lstripped_line = line.lstrip()
+            # Remove leading bullet points (-, *, +, •) and any following spaces
+            cleaned_line = re.sub(r"^[-*+•]\s*", "", lstripped_line, count=1)
+            cleaned_lines.append(cleaned_line)
 
-def _build_heading_regexes() -> list[tuple[str, re.Pattern[str]]]:
-    """Return (section_key, compiled_pattern) pairs in priority order."""
-    patterns = []
-    for key, label in COMPONENT_HEADINGS.items():
-        pat = re.compile(
-            rf"^[#\*\s\d\.]*{re.escape(label)}[^\n:]*:?[^\n]*(?:\n|$)",
-            re.IGNORECASE | re.MULTILINE,
-        )
-        patterns.append((key, pat))
-    for key, labels in _EXTRA_HEADINGS.items():
-        for label in labels:
-            pat = re.compile(
-                rf"^[#\*\s\d\.]*{re.escape(label)}[^\n:]*:?[^\n]*(?:\n|$)",
-                re.IGNORECASE | re.MULTILINE,
-            )
-            patterns.append((key, pat))
-    return patterns
+        return "\n".join(cleaned_lines).strip()
 
+    # Allow optional markdown symbols like #, ##, **, * and optional numbers
+    all_heading_regexes = []
 
-_HEADING_PATTERNS = _build_heading_regexes()
+    for criterion_key, heading_text in heading_map.items():
+        all_heading_regexes.append(rf"^[#\*\s\d\.]*{re.escape(heading_text)}[^\n:]*:?[^\n]*(?:\n|$)")
+
+    all_heading_regexes.append(rf"^[#\*\s\d\.]*Overall Band Score[^\n:]*:?[^\n]*(?:\n|$)")
+    all_heading_regexes.append(rf"^[#\*\s\d\.]*Feedback and Additional Comments[^\n:]*:?[^\n]*(?:\n|$)")
+    all_heading_regexes.append(rf"^[#\*\s\d\.]*Suggestions for Enhancement[^\n:]*:?[^\n]*(?:\n|$)")
+
+    # Find all heading occurrences and their positions
+    heading_matches = []
+    combined_heading_pattern = "(" + "|".join(all_heading_regexes) + ")"
+
+    # We only want to match the first time a heading appears as a main section
+    # to avoid capturing summary bullets at the bottom.
+    matched_keys = set()
+
+    for match in re.finditer(combined_heading_pattern, eval_text, flags=re.IGNORECASE | re.MULTILINE):
+        heading_text_full = match.group(0)
+
+        section_name = ""
+        for k, h_text in heading_map.items():
+            if re.search(rf"(?i){re.escape(h_text)}", heading_text_full):
+                section_name = k
+                break
+
+        if not section_name:
+            if re.search(r"(?i)Overall Band Score", heading_text_full):
+                section_name = "overall_band_score"
+            elif re.search(r"(?i)Feedback and Additional Comments", heading_text_full):
+                section_name = "overall_feedback"
+            elif re.search(r"(?i)Suggestions for Enhancement", heading_text_full):
+                section_name = "suggestions"
+
+        # If we haven't seen this section yet (or if we want to allow overwriting, we don't check)
+        # But usually the first match is the main section.
+        if section_name and section_name not in matched_keys:
+            # Except if the match is a bullet point, let's ignore it if we suspect it's a summary bullet
+            if re.match(r"^\s*[-*+•]\s+\**", heading_text_full):
+                continue # skip list items that look like headings
+
+            heading_matches.append((match.start(), match.end(), heading_text_full, section_name))
+            matched_keys.add(section_name)
+
+    # Sort matches by their start position
+    heading_matches.sort(key=lambda x: x[0])
+
+    # Create sections based on these matches
+    sections_raw_content = {}
+    for i, (start, end, heading_text_full, section_name) in enumerate(heading_matches):
+        content_start_pos = end # Content starts right after the full heading line
+
+        # Find the end of the content for this section
+        if i + 1 < len(heading_matches):
+            content_end_pos = heading_matches[i+1][0] # Content ends at the start of the next heading
+        else:
+            content_end_pos = len(eval_text) # Last section, content goes to end of string
+
+        content = eval_text[content_start_pos:content_end_pos].strip()
+        sections_raw_content[section_name] = content
+
+    # Populate final sections dictionary and apply cleaning
+    for criterion_key in heading_map.keys():
+        sections[criterion_key] = _clean_bullet_points(sections_raw_content.get(criterion_key, ""))
+
+    sections["overall_feedback"] = _clean_bullet_points(sections_raw_content.get("overall_feedback", ""))
+    sections["suggestions"] = _clean_bullet_points(sections_raw_content.get("suggestions", ""))
+
+    return sections
 
 
 # ------------------------------------------------------------------
@@ -109,41 +162,20 @@ _HEADING_PATTERNS = _build_heading_regexes()
 # ------------------------------------------------------------------
 
 def parse_evaluation(eval_text: str) -> ParsedEvaluation:
-    """Extract per-Component text and scores from a raw evaluation string."""
-    heading_spans: list[tuple[int, int, str, str]] = []
-    seen_keys: set[str] = set()
+    """Extract per-component text and scores from a raw evaluation string."""
+    sections = split_evaluation(eval_text)
 
-    for key, pat in _HEADING_PATTERNS:
-        if key in seen_keys:
-            continue
-        for match in pat.finditer(eval_text):
-            heading_text = match.group(0)
-            # Skip list items that superficially look like headings
-            if re.match(r"^\s*[-*+•]\s+\**", heading_text):
-                continue
-            if key not in seen_keys:
-                heading_spans.append((match.start(), match.end(), heading_text, key))
-                seen_keys.add(key)
-                break  # first occurrence only
-
-    heading_spans.sort(key=lambda x: x[0])
-
-    raw: dict[str, tuple[str, str]] = {}
-    for i, (_, end, heading_text, key) in enumerate(heading_spans):
-        content_end = heading_spans[i + 1][0] if i + 1 < len(heading_spans) else len(eval_text)
-        raw[key] = (heading_text, eval_text[end:content_end].strip())
-
+    # Re-scan for heading lines to extract embedded scores.
     result = ParsedEvaluation()
-    for component_key in COMPONENT_HEADINGS:
-        if component_key in raw:
-            heading_text, content = raw[component_key]
-            result.components[component_key] = ComponentEval(
-                text=_clean_text(content),
-                score=_extract_score_from_heading(heading_text),
-            )
-        else:
-            result.components[component_key] = ComponentEval()
+    for key, label in COMPONENT_HEADINGS.items():
+        pat = re.compile(
+            rf"^[#\*\s\d\.]*{re.escape(label)}[^\n:]*:?[^\n]*(?:\n|$)",
+            re.IGNORECASE | re.MULTILINE,
+        )
+        m = pat.search(eval_text)
+        score = _extract_score_from_heading(m.group(0)) if m else None
+        result.components[key] = ComponentEval(text=sections[key], score=score)
 
-    result.overall_feedback = _clean_text(raw.get("overall_feedback", ("", ""))[1])
-    result.suggestions = _clean_text(raw.get("suggestions", ("", ""))[1])
+    result.overall_feedback = sections["overall_feedback"]
+    result.suggestions = sections["suggestions"]
     return result
