@@ -27,6 +27,8 @@ Setup in Colab (two cells):
 
 --- Cell 2: start server (blocking) ---
     import unsloth  # must be first — patches transformers before any other import
+    import nest_asyncio
+    nest_asyncio.apply()
     from edsmith.mcp.server import mcp
     mcp.run(transport="http", port=8000)
 

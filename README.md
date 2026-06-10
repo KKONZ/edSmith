@@ -49,6 +49,8 @@ for line in proc.stderr:
 *Cell 2 — start the server (blocking):*
 ```python
 import unsloth  # must be imported before transformers is loaded anywhere
+import nest_asyncio
+nest_asyncio.apply()
 from edsmith.mcp.server import mcp
 mcp.run(transport="http", port=8000)
 ```
