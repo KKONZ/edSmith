@@ -26,7 +26,7 @@ Open a Colab notebook with a GPU runtime and run these two cells:
 
 *Cell 1 — install and start the tunnel:*
 ```python
-!pip install -q "edsmith[training]" mcp
+!pip install -q "edsmith[training] @ git+https://github.com/kkonz/edSmith.git" mcp
 !wget -q https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 \
      -O cloudflared && chmod +x cloudflared
 
