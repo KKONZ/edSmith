@@ -14,8 +14,8 @@ class OpenRouterProvider(LLMProvider):
         key = api_key or os.environ.get("OPENROUTER_API_KEY")
         if not key:
             raise ValueError("OPENROUTER_API_KEY not set")
-        self._client = OpenAI(api_key=key, base_url=_BASE_URL)
-        self._async_client = AsyncOpenAI(api_key=key, base_url=_BASE_URL)
+        self._client = OpenAI(api_key=key, base_url=_BASE_URL, max_retries=5)
+        self._async_client = AsyncOpenAI(api_key=key, base_url=_BASE_URL, max_retries=5)
 
     def complete(
         self,

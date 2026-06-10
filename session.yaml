@@ -1,0 +1,55 @@
+council:
+  chair_memory_injection: false
+  critic_rounds: 1
+  enabled: false
+k: 4
+memory:
+  chroma_collection_test: semantic_memory_test
+  chroma_collection_train: semantic_memory_train
+  drive_path: /content/drive/MyDrive/edsmith
+models:
+  chair: qwen/qwen3.5-9b
+  critic: qwen/qwen3.5-9b
+  generator: qwen/qwen3.5-9b
+n_iterations: 5
+phase1_concurrency: 4
+prompt_policies:
+  coherence:
+    additional_instructions: ''
+    evidence_required: true
+    feedback_granularity: component
+    specificity: 2
+  grammar:
+    additional_instructions: ''
+    evidence_required: true
+    feedback_granularity: component
+    specificity: 2
+  lexical:
+    additional_instructions: ''
+    evidence_required: true
+    feedback_granularity: component
+    specificity: 2
+  task_response:
+    additional_instructions: ''
+    evidence_required: true
+    feedback_granularity: component
+    specificity: 2
+sampling:
+  random_state: 42
+  reflection_adjacent_ratio: 0.4
+  reflection_correct_ratio: 0.3
+  reflection_large_miss_ratio: 0.3
+  reflection_n: 30
+  size: null
+  validation_ratio: 0.15
+scorer:
+  gradient_accumulation_steps: 4
+  learning_rate: 0.0002
+  load_in_4bit: true
+  lora_alpha: 16
+  lora_r: 16
+  max_seq_length: 4096
+  max_steps: 40
+  model_name: unsloth/Qwen3-1.7B
+  per_device_train_batch_size: 2
+session_id: null

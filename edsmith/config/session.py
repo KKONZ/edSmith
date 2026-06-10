@@ -71,6 +71,7 @@ class SessionConfig(BaseModel):
     session_id: str | None = None       # auto-generated if None
     n_iterations: Annotated[int, Field(ge=1)] = 5
     k: Annotated[int, Field(ge=1)] = 4  # few-shot examples retrieved from semantic memory
+    phase1_concurrency: Annotated[int, Field(ge=1)] = 4  # max concurrent essays in Phase 1
 
     models: ModelConfig = Field(default_factory=ModelConfig)
     council: CouncilConfig = Field(default_factory=CouncilConfig)

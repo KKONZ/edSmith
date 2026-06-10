@@ -17,6 +17,8 @@ Or via CLI:
 from __future__ import annotations
 
 import asyncio
+import base64
+import io
 import json
 from typing import Callable
 
@@ -25,15 +27,20 @@ from mcp import ClientSession, types
 from mcp.client.sse import sse_client
 
 
+def _df_to_b64(df: pd.DataFrame) -> str:
+    buf = io.BytesIO()
+    df.to_parquet(buf, index=False)
+    return base64.b64encode(buf.getvalue()).decode()
+
+
 class MCPClient:
     """Thin wrapper around the edsmith-training MCP server.
 
-    Exposes ``trainer_fn`` and ``evaluator_fn`` as synchronous callables
-    so they drop in directly as Orchestrator arguments.
+    DataFrames are serialised to base64-encoded parquet and sent inline so
+    the server never needs to access the local filesystem.
     """
 
     def __init__(self, server_url: str) -> None:
-        # e.g. "https://abc123.trycloudflare.com/sse"
         self._url = server_url
 
     # ------------------------------------------------------------------
@@ -45,7 +52,7 @@ class MCPClient:
         """Synchronous callable: (feedback_df, scorer_config, output_dir) -> model_path."""
         def _train(
             feedback_df: pd.DataFrame,
-            scorer_config,  # ScorerConfig instance
+            scorer_config,
             output_dir: str,
         ) -> str:
             return asyncio.run(self._atrain(feedback_df, scorer_config, output_dir))
@@ -71,42 +78,30 @@ class MCPClient:
         scorer_config,
         output_dir: str,
     ) -> str:
-        # Write feedback to a temp parquet on Drive so the server can read it
-        import tempfile, os
-        with tempfile.NamedTemporaryFile(suffix=".parquet", delete=False) as f:
-            tmp_path = f.name
-        try:
-            feedback_df.to_parquet(tmp_path, index=False)
-            result_json = await self._call_tool(
-                "train_scorer",
-                {
-                    "feedback_path": tmp_path,
-                    "scorer_config": json.dumps(scorer_config.model_dump()),
-                    "output_dir": output_dir,
-                },
-            )
-            return json.loads(result_json)["model_path"]
-        finally:
-            os.unlink(tmp_path)
+        result_json = await self._call_tool(
+            "train_scorer",
+            {
+                "feedback_data": _df_to_b64(feedback_df),
+                "scorer_config": json.dumps(scorer_config.model_dump()),
+                "output_dir": output_dir,
+            },
+        )
+        return json.loads(result_json)["model_path"]
 
     async def _aevaluate(
         self,
         model_path: str,
         df: pd.DataFrame,
     ) -> tuple[list[float], list[float]]:
-        import tempfile, os
-        with tempfile.NamedTemporaryFile(suffix=".parquet", delete=False) as f:
-            tmp_path = f.name
-        try:
-            df.to_parquet(tmp_path, index=False)
-            result_json = await self._call_tool(
-                "evaluate_scorer",
-                {"model_path": model_path, "eval_data_path": tmp_path},
-            )
-            result = json.loads(result_json)
-            return result["y_true"], result["y_pred"]
-        finally:
-            os.unlink(tmp_path)
+        result_json = await self._call_tool(
+            "evaluate_scorer",
+            {
+                "model_path": model_path,
+                "eval_data": _df_to_b64(df),
+            },
+        )
+        result = json.loads(result_json)
+        return result["y_true"], result["y_pred"]
 
     # ------------------------------------------------------------------
     # Low-level MCP call

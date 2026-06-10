@@ -7,6 +7,19 @@ import typer
 
 app = typer.Typer(name="edsmith", add_completion=False, no_args_is_help=True)
 
+_BANNER = (
+    "\n\033[1;36m"
+    "███████╗██████╗ ███████╗███╗   ███╗██╗████████╗██╗  ██╗\n"
+    "██╔════╝██╔══██╗██╔════╝████╗ ████║██║╚══██╔══╝██║  ██║\n"
+    "█████╗  ██║  ██║███████╗██╔████╔██║██║   ██║   ███████║\n"
+    "██╔══╝  ██║  ██║╚════██║██║╚██╔╝██║██║   ██║   ██╔══██║\n"
+    "███████╗██████╔╝███████║██║ ╚═╝ ██║██║   ██║   ██║  ██║\n"
+    "╚══════╝╚═════╝ ╚══════╝╚═╝     ╚═╝╚═╝   ╚═╝   ╚═╝  ╚═╝\n"
+    "\033[0m\033[36m"
+    "\n  ─────  multi-agent generative feedback council  ─────\n"
+    "\033[0m\n"
+)
+
 
 # ------------------------------------------------------------------
 # run-session
@@ -30,6 +43,8 @@ def run_session(
     from edsmith.memory.semantic import SemanticMemory
     from edsmith.orchestrator import Orchestrator
     from edsmith.providers.openrouter import OpenRouterProvider
+
+    typer.echo(_BANNER)
 
     # ---- Config ----------------------------------------------------
     if not config_path.exists():
@@ -68,12 +83,17 @@ def run_session(
             chair_memory=chair_memory,
         )
         typer.echo(f"Council agent  (critic_rounds={cfg.council.critic_rounds}, chair_memory={cfg.council.chair_memory_injection})")
+        typer.echo(f"  generator : {cfg.models.generator}")
+        typer.echo(f"  critic    : {cfg.models.critic}")
+        typer.echo(f"  chair     : {cfg.models.chair}")
     else:
         feedback_agent = FeedbackAgent(
             provider=provider,
             model=cfg.models.generator,
         )
-        typer.echo(f"Feedback agent  (model={cfg.models.generator})")
+        typer.echo(f"Feedback agent")
+        typer.echo(f"  generator : {cfg.models.generator}")
+        typer.echo(f"  reflection: {cfg.models.chair}")
 
     # ---- Reflection agent ------------------------------------------
     reflection_agent = ReflectionAgent(
@@ -120,6 +140,11 @@ def run_session(
         drive_path=drive_path,
     )
 
+    # ---- Baseline check -------------------------------------------
+    baseline_records = [r for r in episodic_mem.load_all() if r.architecture == "baseline"]
+    if not baseline_records:
+        typer.echo("WARNING: no baseline (Session 0) found. Run `edsmith run-baseline` first.", err=True)
+
     typer.echo(f"Starting session …  parent={parent or 'root'}")
     try:
         record = orchestrator.run(train_df, val_df, test_df, parent_session_id=parent)
@@ -130,6 +155,125 @@ def run_session(
     acc = f"{record.best_accuracy:.4f}" if record.best_accuracy is not None else "—"
     typer.echo(f"\nSession {record.session_id} complete  best_accuracy={acc}")
     typer.echo(f"Reflection saved to {drive_path}/episodic/{record.session_id}.md")
+
+
+# ------------------------------------------------------------------
+# run-baseline
+# ------------------------------------------------------------------
+
+@app.command("run-baseline")
+def run_baseline(
+    config_path: Path = typer.Option(..., "--config", "-c", help="Path to session YAML config"),
+    drive: Optional[Path] = typer.Option(None, "--drive", help="Override drive_path from config"),
+    mcp_url: Optional[str] = typer.Option(None, "--mcp-url", help="SSE URL of the Colab MCP training server"),
+) -> None:
+    """Train Session 0 (baseline Scorer) on the original parsed dataset.
+
+    Must be run once before the first run-session. Parses the original IELTS
+    evaluations into per-component scores and trains the Scorer directly on
+    that data, recording the result as the root node in episodic memory.
+    """
+    from edsmith.config.session import SessionConfig
+    from edsmith.data.loader import build_baseline_feedback_df, load_with_parsed_evaluations
+    from edsmith.data.loader import train_test_split as val_split
+    from edsmith.memory.episodic import EpisodicMemory, EpisodicRecord, IterationMetrics
+    from edsmith.metrics import compute_all
+    from edsmith.providers.openrouter import OpenRouterProvider
+
+    typer.echo(_BANNER)
+
+    if not config_path.exists():
+        typer.echo(f"Config not found: {config_path}", err=True)
+        raise typer.Exit(code=1)
+
+    cfg = SessionConfig.from_yaml(config_path)
+    drive_path = drive or Path(cfg.memory.drive_path)
+
+    episodic_mem = EpisodicMemory(drive_path=drive_path)
+    existing = [r for r in episodic_mem.load_all() if r.architecture == "baseline"]
+    if existing:
+        typer.echo(f"Baseline already exists (session_id={existing[0].session_id}). Skipping.")
+        raise typer.Exit()
+
+    typer.echo("Loading dataset …")
+    try:
+        train_full = load_with_parsed_evaluations(split="train")
+        test_df = load_with_parsed_evaluations(split="test")
+    except Exception as exc:
+        typer.echo(f"Dataset load failed: {exc}", err=True)
+        raise typer.Exit(code=1)
+
+    train_df, val_df = val_split(
+        train_full,
+        validation_ratio=cfg.sampling.validation_ratio,
+        random_state=cfg.sampling.random_state,
+    )
+    typer.echo(f"Dataset  train={len(train_df)}  val={len(val_df)}  test={len(test_df)}")
+
+    typer.echo("Building baseline feedback DataFrame from parsed evaluations …")
+    feedback_df = build_baseline_feedback_df(train_df)
+    typer.echo(f"  {len(feedback_df)} component rows  ({feedback_df['score'].isna().sum()} dropped — missing score)")
+
+    if mcp_url:
+        from edsmith.mcp.client import MCPClient
+        _mcp = MCPClient(mcp_url)
+        trainer_fn = _mcp.trainer_fn
+        evaluator_fn = _mcp.evaluator_fn
+        typer.echo(f"MCP training server: {mcp_url}")
+    else:
+        trainer_fn = _load_trainer()
+        evaluator_fn = _load_evaluator()
+
+    output_dir = drive_path / "scorer_baseline"
+    typer.echo("Training baseline Scorer …")
+    try:
+        model_path = trainer_fn(feedback_df, cfg.scorer, str(output_dir))
+    except Exception as exc:
+        typer.echo(f"Training failed: {exc}", err=True)
+        if hasattr(exc, "exceptions"):
+            for sub in exc.exceptions:
+                typer.echo(f"  caused by: {sub}", err=True)
+        raise typer.Exit(code=1)
+
+    typer.echo("Evaluating …")
+    try:
+        y_true_val, y_pred_val = evaluator_fn(model_path, val_df)
+        val_metrics = compute_all(y_true_val, y_pred_val)
+        y_true_test, y_pred_test = evaluator_fn(model_path, test_df)
+        test_metrics = compute_all(y_true_test, y_pred_test)
+    except Exception as exc:
+        typer.echo(f"Evaluation failed: {exc}", err=True)
+        if hasattr(exc, "exceptions"):
+            for sub in exc.exceptions:
+                typer.echo(f"  caused by: {sub}", err=True)
+        raise typer.Exit(code=1)
+
+    record = EpisodicRecord(
+        session_id="baseline",
+        architecture="baseline",
+        tree_depth=0,
+        reflection_notes=(
+            "Session 0: baseline Scorer trained on original parsed IELTS evaluations. "
+            f"Val accuracy={val_metrics['accuracy']:.4f}  "
+            f"Test accuracy={test_metrics['accuracy']:.4f}"
+        ),
+        iterations=[IterationMetrics(
+            iteration=0,
+            accuracy=val_metrics["accuracy"],
+            adjacent_accuracy=val_metrics["adjacent_accuracy"],
+            qwk=val_metrics["qwk"],
+            smd=val_metrics["smd"],
+        )],
+    )
+    episodic_mem.save(record)
+
+    typer.echo(
+        f"\nBaseline complete"
+        f"  val_acc={val_metrics['accuracy']:.4f}"
+        f"  test_acc={test_metrics['accuracy']:.4f}"
+        f"  qwk={val_metrics['qwk']:.4f}"
+    )
+    typer.echo(f"Saved to {drive_path}/episodic/baseline.md")
 
 
 # ------------------------------------------------------------------

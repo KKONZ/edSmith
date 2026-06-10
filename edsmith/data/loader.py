@@ -30,6 +30,30 @@ def load_with_parsed_evaluations(split: str = "train") -> pd.DataFrame:
     return df
 
 
+def build_baseline_feedback_df(df: pd.DataFrame) -> pd.DataFrame:
+    """Flatten parsed evaluations into the same format Phase 1 produces.
+
+    Uses the original human-written component text and scores as training
+    targets for the baseline Scorer (Session 0).
+    Rows with a null component score are dropped — they cannot be labelled.
+    """
+    records = []
+    for _, row in df.iterrows():
+        parsed = row["parsed_evaluation"]
+        for component, eval_ in parsed.components.items():
+            if eval_.score is None:
+                continue
+            records.append({
+                "question": row["question"],
+                "essay": row["essay"],
+                "band": row["band"],
+                "component": component,
+                "feedback_text": eval_.text,
+                "score": eval_.score,
+            })
+    return pd.DataFrame(records)
+
+
 def train_test_split(
     df: pd.DataFrame,
     validation_ratio: float = 0.15,

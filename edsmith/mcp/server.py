@@ -3,24 +3,23 @@
 Setup in Colab (two cells):
 
 --- Cell 1: install & tunnel ---
-    !pip install -q edsmith mcp coral-pytorch unsloth
+    !pip install -q "edsmith[training] @ git+https://github.com/kkonz/edSmith.git" mcp
     !wget -q https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 \\
          -O cloudflared && chmod +x cloudflared
 
-    import re, subprocess, threading
+    import subprocess, re
 
-    def _start_tunnel():
-        proc = subprocess.Popen(
-            ["./cloudflared", "tunnel", "--url", "http://localhost:8000"],
-            stderr=subprocess.PIPE,
-        )
-        for line in proc.stderr:
-            m = re.search(r"https://[a-z0-9-]+\\.trycloudflare\\.com", line.decode())
-            if m:
-                print(f"\\nMCP URL: {m.group()}/sse")
-                break
+    proc = subprocess.Popen(
+        ["./cloudflared", "tunnel", "--url", "http://localhost:8000"],
+        stderr=subprocess.PIPE,
+        text=True,
+    )
 
-    threading.Thread(target=_start_tunnel, daemon=True).start()
+    for line in proc.stderr:
+        m = re.search(r"https://[a-z0-9-]+\\.trycloudflare\\.com", line)
+        if m:
+            print(f"\\nMCP URL: {m.group()}/sse\\n")
+            break
 
 --- Cell 2: start server (blocking) ---
     import subprocess
@@ -59,14 +58,14 @@ _BAND_TO_IDX: dict[float, int] = {b: i for i, b in enumerate(_BANDS)}
 
 @mcp.tool()
 async def train_scorer(
-    feedback_path: str,
+    feedback_data: str,
     scorer_config: str,  # JSON-encoded ScorerConfig.model_dump()
     output_dir: str,
 ) -> str:
     """Fine-tune the Scorer (Qwen3 + LoRA + CORN loss) on Phase 1 feedback.
 
     Args:
-        feedback_path: Path to parquet file with columns
+        feedback_data: Base64-encoded parquet bytes with columns
             [question, essay, band, component, feedback_text, score].
         scorer_config: JSON string of ScorerConfig fields.
         output_dir: Directory to save the trained model.
@@ -74,12 +73,18 @@ async def train_scorer(
     Returns:
         JSON string {"model_path": str}.
     """
-    cfg = json.loads(scorer_config)
-    loop = asyncio.get_event_loop()
-    model_path = await loop.run_in_executor(
-        None, _train, feedback_path, cfg, output_dir
-    )
-    return json.dumps({"model_path": model_path})
+    import base64, io, os, tempfile
+    raw = base64.b64decode(feedback_data)
+    with tempfile.NamedTemporaryFile(suffix=".parquet", delete=False) as f:
+        f.write(raw)
+        tmp_path = f.name
+    try:
+        cfg = json.loads(scorer_config)
+        loop = asyncio.get_event_loop()
+        model_path = await loop.run_in_executor(None, _train, tmp_path, cfg, output_dir)
+        return json.dumps({"model_path": model_path})
+    finally:
+        os.unlink(tmp_path)
 
 
 # ------------------------------------------------------------------
@@ -89,23 +94,29 @@ async def train_scorer(
 @mcp.tool()
 async def evaluate_scorer(
     model_path: str,
-    eval_data_path: str,
+    eval_data: str,
 ) -> str:
     """Run the trained Scorer on an evaluation set and return predictions.
 
     Args:
-        model_path: Path to the saved model directory.
-        eval_data_path: Path to parquet file with columns [question, essay, band].
+        model_path: Path to the saved model directory (on Colab / Drive).
+        eval_data: Base64-encoded parquet bytes with columns [question, essay, band].
 
     Returns:
         JSON string {"y_true": [...], "y_pred": [...]}.
         Predictions are overall band scores (mean of four component predictions).
     """
-    loop = asyncio.get_event_loop()
-    y_true, y_pred = await loop.run_in_executor(
-        None, _evaluate, model_path, eval_data_path
-    )
-    return json.dumps({"y_true": y_true, "y_pred": y_pred})
+    import base64, os, tempfile
+    raw = base64.b64decode(eval_data)
+    with tempfile.NamedTemporaryFile(suffix=".parquet", delete=False) as f:
+        f.write(raw)
+        tmp_path = f.name
+    try:
+        loop = asyncio.get_event_loop()
+        y_true, y_pred = await loop.run_in_executor(None, _evaluate, model_path, tmp_path)
+        return json.dumps({"y_true": y_true, "y_pred": y_pred})
+    finally:
+        os.unlink(tmp_path)
 
 
 # ------------------------------------------------------------------

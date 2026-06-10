@@ -47,7 +47,7 @@ class EpisodicRecord(BaseModel):
     value_estimate: float = 0.0      # tracks best accuracy seen at this node
 
     # Architecture
-    architecture: Literal["react", "council", "hybrid"] = "react"
+    architecture: Literal["baseline", "react", "council", "hybrid"] = "react"
     council_enabled: bool = False
     council_chair_memory_injection: bool = False
 

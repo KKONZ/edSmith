@@ -30,20 +30,19 @@ Open a Colab notebook with a GPU runtime and run these two cells:
 !wget -q https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 \
      -O cloudflared && chmod +x cloudflared
 
-import re, subprocess, threading
+import subprocess, re
 
-def _start_tunnel():
-    proc = subprocess.Popen(
-        ["./cloudflared", "tunnel", "--url", "http://localhost:8000"],
-        stderr=subprocess.PIPE,
-    )
-    for line in proc.stderr:
-        m = re.search(r"https://[a-z0-9-]+\.trycloudflare\.com", line.decode())
-        if m:
-            print(f"\nMCP URL: {m.group()}/sse")
-            break
+proc = subprocess.Popen(
+    ["./cloudflared", "tunnel", "--url", "http://localhost:8000"],
+    stderr=subprocess.PIPE,
+    text=True,
+)
 
-threading.Thread(target=_start_tunnel, daemon=True).start()
+for line in proc.stderr:
+    m = re.search(r"https://[a-z0-9-]+\.trycloudflare\.com", line)
+    if m:
+        print(f"\nMCP URL: {m.group()}/sse\n")
+        break
 ```
 
 *Cell 2 — start the server (blocking):*
@@ -54,7 +53,17 @@ subprocess.run(["python", "-m", "edsmith.mcp.server"])
 
 Copy the printed MCP URL. The URL is the only access control — keep it private while the session is running.
 
-**5. Run a session**
+**5. Run the baseline (Session 0) — once only**
+
+Parses the original IELTS dataset into per-component scores and trains the Scorer on that data. Must be run before the first `run-session`.
+
+```bash
+edsmith run-baseline --config session.yaml --mcp-url https://<id>.trycloudflare.com/sse
+```
+
+The IELTS dataset downloads automatically from Hugging Face on first run.
+
+**6. Run a session**
 
 Back in your local terminal:
 
@@ -72,10 +81,11 @@ The IELTS dataset downloads automatically from Hugging Face on first run.
 
 ```yaml
 n_iterations: 5
+phase1_concurrency: 1   # max concurrent essays; set to 1 for free-tier models (16 req/min limit)
 
 models:
-  generator: mistralai/mistral-7b-instruct   # feedback generation
-  critic: mistralai/mistral-7b-instruct      # council mode only
+  generator: qwen/qwen3.5-9b   # feedback generation
+  critic: qwen/qwen3.5-9b      # council mode only
   chair: anthropic/claude-sonnet-4-5         # council mode + reflection
 
 council:
@@ -96,6 +106,7 @@ prompt_policies:        # one entry per component; reflection updates these each
 ```
 
 ---
+
 
 ## Other commands
 

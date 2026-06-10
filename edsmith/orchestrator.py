@@ -5,6 +5,8 @@ import uuid
 from pathlib import Path
 from typing import Callable, TypedDict
 
+from tqdm.asyncio import tqdm as atqdm
+
 import pandas as pd
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, StateGraph
@@ -154,18 +156,24 @@ class Orchestrator:
 
     async def _node_phase1(self, state: SessionState) -> dict:
         """Generate per-component feedback for the training sample."""
+        iteration = state["iteration"] + 1
         policies = {k: PromptPolicy(**v) for k, v in state["policies"].items()}
         sample = self._get_sample()
 
-        tasks = [
-            self._feedback_agent.agenerate_all(
-                question=row["question"],
-                essay=row["essay"],
-                policies=policies,
-            )
-            for _, row in sample.iterrows()
-        ]
-        results = await asyncio.gather(*tasks)
+        print(f"\n[Iteration {iteration}/{self._config.n_iterations}] Phase 1  ·  generating feedback for {len(sample)} essays …")
+
+        sem = asyncio.Semaphore(self._config.phase1_concurrency)
+
+        async def _bounded(row):
+            async with sem:
+                return await self._feedback_agent.agenerate_all(
+                    question=row["question"],
+                    essay=row["essay"],
+                    policies=policies,
+                )
+
+        tasks = [_bounded(row) for _, row in sample.iterrows()]
+        results = await atqdm.gather(*tasks, desc="  essays", unit="essay")
 
         records = []
         for (_, row), comp_results in zip(sample.iterrows(), results):
@@ -187,6 +195,7 @@ class Orchestrator:
 
     async def _node_train(self, state: SessionState) -> dict:
         """Fine-tune the Scorer on Phase 1 feedback (runs trainer_fn in executor)."""
+        print(f"\n[Iteration {state['iteration'] + 1}/{self._config.n_iterations}] Training scorer …")
         feedback_df = pd.read_parquet(state["feedback_path"])
         output_dir = self._drive_path / f"scorer_iter{state['iteration']}"
 
@@ -199,6 +208,7 @@ class Orchestrator:
 
     async def _node_evaluate(self, state: SessionState) -> dict:
         """Evaluate the Scorer on val and test sets; update the episodic record."""
+        print(f"\n[Iteration {state['iteration'] + 1}/{self._config.n_iterations}] Evaluating …")
         loop = asyncio.get_event_loop()
         model_path = state["model_path"]
 
@@ -236,6 +246,7 @@ class Orchestrator:
 
     async def _node_reflect(self, state: SessionState) -> dict:
         """Run reflection agent; update policies and episodic record."""
+        print(f"\n[Iteration {state['iteration'] + 1}/{self._config.n_iterations}] Reflecting …")
         current_policies = {k: PromptPolicy(**v) for k, v in state["policies"].items()}
 
         output = await self._reflection_agent.areflect(
