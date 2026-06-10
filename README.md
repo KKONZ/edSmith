@@ -48,8 +48,9 @@ for line in proc.stderr:
 
 *Cell 2 — start the server (blocking):*
 ```python
-import subprocess
-subprocess.run(["python", "-m", "edsmith.mcp.server"])
+import unsloth  # must be imported before transformers is loaded anywhere
+from edsmith.mcp.server import mcp
+mcp.run(transport="http", port=8000)
 ```
 
 Copy the printed MCP URL. The URL is the only access control — keep it private while the session is running.

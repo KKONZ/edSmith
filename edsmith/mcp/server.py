@@ -26,8 +26,9 @@ Setup in Colab (two cells):
             break
 
 --- Cell 2: start server (blocking) ---
-    import subprocess
-    subprocess.run(["python", "-m", "edsmith.mcp.server"])
+    import unsloth  # must be first — patches transformers before any other import
+    from edsmith.mcp.server import mcp
+    mcp.run(transport="http", port=8000)
 
 Then on your local machine:
     edsmith run-session --config session.yaml --mcp-url https://<tunnel-id>.trycloudflare.com/mcp
@@ -37,17 +38,17 @@ from __future__ import annotations
 
 import asyncio
 import json
+import sys
 from pathlib import Path
 
-import numpy as np
-import pandas as pd
-import torch
 from fastmcp import FastMCP
 
 from edsmith.data.parser import COMPONENT_HEADINGS
 from edsmith.metrics import compute_all
 
 mcp = FastMCP("edsmith-training")
+
+print("[edsmith-server] Server module loaded", flush=True, file=sys.stderr)
 
 # IELTS component band values — ordinal classes for CORN
 _BANDS: list[float] = [b / 2 for b in range(2, 19)]  # 1.0 … 9.0  (17 values)
@@ -77,10 +78,12 @@ async def train_scorer(
         JSON string {"model_path": str}.
     """
     import base64, os, tempfile
+    print("[edsmith-server] train_scorer called", flush=True, file=sys.stderr)
     raw = base64.b64decode(feedback_data)
     with tempfile.NamedTemporaryFile(suffix=".parquet", delete=False) as f:
         f.write(raw)
         tmp_path = f.name
+    print(f"[edsmith-server] feedback parquet written to {tmp_path}", flush=True, file=sys.stderr)
     try:
         cfg = json.loads(scorer_config)
         loop = asyncio.get_event_loop()
@@ -142,10 +145,12 @@ def _log(msg: str) -> None:
 
 
 def _train(feedback_path: str, cfg: dict, output_dir: str) -> str:
-    import sys
+    from unsloth import FastModel  # must be first — patches transformers/torch
+    import numpy as np
+    import pandas as pd
+    import torch
     from coral_pytorch.losses import corn_loss
     from transformers import TrainingArguments, Trainer, DataCollatorWithPadding
-    from unsloth import FastModel
 
     _log(f"Python {sys.version}")
     _log(f"Config: {cfg}")
@@ -192,7 +197,7 @@ def _train(feedback_path: str, cfg: dict, output_dir: str) -> str:
 
     _log(f"Tokenizing {len(df)} examples (max_length={cfg['max_seq_length']}) …")
     dataset = _ScorerDataset(df, tokenizer, cfg["max_seq_length"])
-    _log(f"Dataset ready. Building trainer …")
+    _log(f"Dataset ready ({len(dataset)} items). Building trainer …")
 
     training_args = TrainingArguments(
         output_dir=output_dir,
@@ -230,10 +235,15 @@ def _train(feedback_path: str, cfg: dict, output_dir: str) -> str:
 # ------------------------------------------------------------------
 
 def _evaluate(model_path: str, eval_data_path: str) -> tuple[list[float], list[float]]:
-    from unsloth import FastModel
+    from unsloth import FastModel  # must be first
+    import numpy as np
+    import pandas as pd
+    import torch
     from coral_pytorch.dataset import corn_label_from_logits
 
+    _log(f"Evaluating model at {model_path} …")
     df = pd.read_parquet(eval_data_path)
+    _log(f"Eval rows: {len(df)}")
 
     model, tokenizer = FastModel.from_pretrained(
         model_name=model_path,
@@ -275,6 +285,7 @@ def _evaluate(model_path: str, eval_data_path: str) -> tuple[list[float], list[f
             y_true.append(float(row["band"]))
             y_pred.append(pred_band)
 
+    _log(f"Evaluation complete. {len(y_true)} predictions.")
     return y_true, y_pred
 
 
@@ -282,8 +293,8 @@ def _evaluate(model_path: str, eval_data_path: str) -> tuple[list[float], list[f
 # Dataset
 # ------------------------------------------------------------------
 
-class _ScorerDataset(torch.utils.data.Dataset):
-    def __init__(self, df: pd.DataFrame, tokenizer, max_length: int) -> None:
+class _ScorerDataset:
+    def __init__(self, df, tokenizer, max_length: int) -> None:
         self._encodings = tokenizer(
             [
                 _format_input(row["question"], row["essay"], row["component"])
@@ -291,15 +302,14 @@ class _ScorerDataset(torch.utils.data.Dataset):
             ],
             truncation=True,
             max_length=max_length,
-            padding="max_length",
-            return_tensors="pt",
+            padding=False,
         )
-        self._labels = torch.tensor(df["label"].tolist(), dtype=torch.long)
+        self._labels = df["label"].tolist()
 
     def __len__(self) -> int:
         return len(self._labels)
 
-    def __getitem__(self, idx: int) -> dict[str, torch.Tensor]:
+    def __getitem__(self, idx: int) -> dict:
         return {
             "input_ids": self._encodings["input_ids"][idx],
             "attention_mask": self._encodings["attention_mask"][idx],
