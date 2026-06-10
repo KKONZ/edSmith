@@ -23,8 +23,6 @@ class ComponentEval:
 @dataclass
 class ParsedEvaluation:
     components: dict[str, ComponentEval] = field(default_factory=dict)
-    overall_feedback: str = ""
-    suggestions: str = ""
 
 
 # ------------------------------------------------------------------
@@ -60,7 +58,7 @@ def _extract_score_from_heading(heading: str) -> float | None:
 
 
 # ------------------------------------------------------------------
-# Section splitting (verbatim user logic)
+# Section splitting (verbatim user logic, components only)
 # ------------------------------------------------------------------
 
 def split_evaluation(eval_text):
@@ -91,10 +89,6 @@ def split_evaluation(eval_text):
     for criterion_key, heading_text in heading_map.items():
         all_heading_regexes.append(rf"^[#\*\s\d\.]*{re.escape(heading_text)}[^\n:]*:?[^\n]*(?:\n|$)")
 
-    all_heading_regexes.append(rf"^[#\*\s\d\.]*Overall Band Score[^\n:]*:?[^\n]*(?:\n|$)")
-    all_heading_regexes.append(rf"^[#\*\s\d\.]*Feedback and Additional Comments[^\n:]*:?[^\n]*(?:\n|$)")
-    all_heading_regexes.append(rf"^[#\*\s\d\.]*Suggestions for Enhancement[^\n:]*:?[^\n]*(?:\n|$)")
-
     # Find all heading occurrences and their positions
     heading_matches = []
     combined_heading_pattern = "(" + "|".join(all_heading_regexes) + ")"
@@ -111,14 +105,6 @@ def split_evaluation(eval_text):
             if re.search(rf"(?i){re.escape(h_text)}", heading_text_full):
                 section_name = k
                 break
-
-        if not section_name:
-            if re.search(r"(?i)Overall Band Score", heading_text_full):
-                section_name = "overall_band_score"
-            elif re.search(r"(?i)Feedback and Additional Comments", heading_text_full):
-                section_name = "overall_feedback"
-            elif re.search(r"(?i)Suggestions for Enhancement", heading_text_full):
-                section_name = "suggestions"
 
         # If we haven't seen this section yet (or if we want to allow overwriting, we don't check)
         # But usually the first match is the main section.
@@ -151,9 +137,6 @@ def split_evaluation(eval_text):
     for criterion_key in heading_map.keys():
         sections[criterion_key] = _clean_bullet_points(sections_raw_content.get(criterion_key, ""))
 
-    sections["overall_feedback"] = _clean_bullet_points(sections_raw_content.get("overall_feedback", ""))
-    sections["suggestions"] = _clean_bullet_points(sections_raw_content.get("suggestions", ""))
-
     return sections
 
 
@@ -176,6 +159,4 @@ def parse_evaluation(eval_text: str) -> ParsedEvaluation:
         score = _extract_score_from_heading(m.group(0)) if m else None
         result.components[key] = ComponentEval(text=sections[key], score=score)
 
-    result.overall_feedback = sections["overall_feedback"]
-    result.suggestions = sections["suggestions"]
     return result

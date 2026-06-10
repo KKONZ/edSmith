@@ -193,7 +193,7 @@ def _build_semantic_memory(
         if "evaluation" in row and pd.notna(row["evaluation"]):
             parsed_eval_sections = split_evaluation(str(row["evaluation"]))
             for section_name, section_text in parsed_eval_sections.items():
-                current_metadatas[f"eval_{section_name}"] = section_text
+                current_metadatas[f"eval_{section_name}"] = section_text  # eval_task_response, eval_coherence, etc.
 
         content_column = "essay"
         if content_column not in row or pd.isna(row[content_column]):
