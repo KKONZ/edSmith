@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
 import chromadb
+import pandas as pd
 from chromadb.utils.embedding_functions import SentenceTransformerEmbeddingFunction
+from tqdm import tqdm
 
-from edsmith.data.parser import COMPONENT_HEADINGS
+from edsmith.data.parser import COMPONENT_HEADINGS, split_evaluation
 
 
 @dataclass
@@ -23,14 +26,10 @@ class SemanticExample:
 class SemanticMemory:
     """Local ChromaDB-backed few-shot retrieval store.
 
-    Essays are the embedded documents — similarity search finds essays close to
-    the query essay, then returns their feedback as few-shot context.
-
-    Two collections: training (read/write) and test (read-only at inference;
-    never exposed at individual-record level to the reflection stage).
-
-    An optional cross-encoder reranker can be supplied; when present, retrieval
-    fetches k * rerank_factor candidates then reranks to the top k.
+    One document per essay; all evaluation sections are stored as metadata
+    (eval_task_response, eval_coherence, eval_lexical, eval_grammar, etc.).
+    Retrieval queries by essay similarity then pulls the requested component
+    feedback from the result metadata.
     """
 
     def __init__(
@@ -59,7 +58,19 @@ class SemanticMemory:
             self._reranker = CrossEncoder(reranker_model, trust_remote_code=True)
 
     # ------------------------------------------------------------------
-    # Write
+    # Build from DataFrame (matches Colab build_semantic_memory pattern)
+    # ------------------------------------------------------------------
+
+    def build_train_from_df(self, df: pd.DataFrame, batch_size: int = 100) -> None:
+        """Populate the training collection from a raw IELTS DataFrame."""
+        _build_semantic_memory(df, self._train, id_prefix="train_", batch_size=batch_size)
+
+    def build_test_from_df(self, df: pd.DataFrame, batch_size: int = 100) -> None:
+        """Populate the test collection from a raw IELTS DataFrame."""
+        _build_semantic_memory(df, self._test, id_prefix="test_", batch_size=batch_size)
+
+    # ------------------------------------------------------------------
+    # Write (individual examples, used by orchestrator after Phase 1)
     # ------------------------------------------------------------------
 
     def add_train(self, examples: list[SemanticExample]) -> None:
@@ -108,7 +119,6 @@ class SemanticMemory:
         results = collection.query(
             query_texts=[query_essay],
             n_results=fetch_n,
-            where={"component": component},
         )
 
         candidates: list[SemanticExample] = []
@@ -116,15 +126,17 @@ class SemanticMemory:
             if doc_id == exclude_id:
                 continue
             meta = results["metadatas"][0][i]
+            feedback_text = meta.get(f"eval_{component}", "")
+            raw_score = meta.get("score", -1)
             candidates.append(
                 SemanticExample(
                     id=doc_id,
                     essay=results["documents"][0][i],
-                    question=meta["question"],
-                    component=meta["component"],
-                    feedback_text=meta["feedback_text"],
-                    score=meta["score"] if meta["score"] >= 0 else None,
-                    band=meta["band"],
+                    question=meta.get("question", ""),
+                    component=component,
+                    feedback_text=feedback_text,
+                    score=float(raw_score) if raw_score >= 0 else None,
+                    band=float(meta.get("band", 0)),
                 )
             )
 
@@ -151,7 +163,66 @@ class SemanticMemory:
 
 
 # ------------------------------------------------------------------
-# Helpers
+# Build helper — mirrors Colab build_semantic_memory verbatim
+# ------------------------------------------------------------------
+
+def _build_semantic_memory(
+    df: pd.DataFrame,
+    collection,
+    id_prefix: str = "",
+    additional_metadatas: dict | None = None,
+    dynamic_metadatas_from_cols: list[str] | None = None,
+    batch_size: int = 100,
+) -> None:
+    ids = []
+    documents = []
+    metadatas = []
+
+    if dynamic_metadatas_from_cols is None:
+        dynamic_metadatas_from_cols = []
+
+    for idx, row in tqdm(df.iterrows(), total=len(df)):
+        current_metadatas: dict = {}
+        if additional_metadatas:
+            current_metadatas.update(additional_metadatas)
+
+        for meta_key in dynamic_metadatas_from_cols:
+            if meta_key in row and pd.notna(row[meta_key]):
+                current_metadatas[meta_key] = str(row[meta_key])
+
+        if "evaluation" in row and pd.notna(row["evaluation"]):
+            parsed_eval_sections = split_evaluation(str(row["evaluation"]))
+            for section_name, section_text in parsed_eval_sections.items():
+                current_metadatas[f"eval_{section_name}"] = section_text
+
+        content_column = "essay"
+        if content_column not in row or pd.isna(row[content_column]):
+            continue
+        document_content = str(row[content_column])
+
+        # Store common lookup fields as top-level metadata
+        if "question" in row and pd.notna(row["question"]):
+            current_metadatas["question"] = str(row["question"])
+        if "band" in row and pd.notna(row["band"]):
+            current_metadatas["band"] = float(row["band"])
+            current_metadatas["score"] = float(row["band"])
+
+        ids.append(f"{id_prefix}{idx}")
+        documents.append(document_content)
+        metadatas.append(current_metadatas)
+
+        if len(ids) >= batch_size:
+            collection.add(ids=ids, documents=documents, metadatas=metadatas)
+            ids = []
+            documents = []
+            metadatas = []
+
+    if ids:
+        collection.add(ids=ids, documents=documents, metadatas=metadatas)
+
+
+# ------------------------------------------------------------------
+# Helpers for add_train / add_test (individual SemanticExample path)
 # ------------------------------------------------------------------
 
 def _upsert(collection, examples: list[SemanticExample]) -> None:
@@ -167,8 +238,7 @@ def _upsert(collection, examples: list[SemanticExample]) -> None:
 def _metadata(ex: SemanticExample) -> dict:
     return {
         "question": ex.question,
-        "component": ex.component,
-        "feedback_text": ex.feedback_text,
+        f"eval_{ex.component}": ex.feedback_text,
         "band": ex.band,
         "score": ex.score if ex.score is not None else -1.0,
     }
