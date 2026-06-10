@@ -195,10 +195,10 @@ def run_baseline(
         typer.echo(f"Baseline already exists (session_id={existing[0].session_id}). Skipping.")
         raise typer.Exit()
 
-    typer.echo("Loading dataset …")
+    typer.echo("Loading dataset (force re-download to bypass cache) …")
     try:
-        train_full = load_with_parsed_evaluations(split="train")
-        test_df = load_with_parsed_evaluations(split="test")
+        train_full = load_with_parsed_evaluations(split="train", force_download=True)
+        test_df = load_with_parsed_evaluations(split="test", force_download=True)
     except Exception as exc:
         typer.echo(f"Dataset load failed: {exc}", err=True)
         raise typer.Exit(code=1)

@@ -12,20 +12,23 @@ _COLUMN_MAP = {
 }
 
 
-def load_ielts(split: str = "train") -> pd.DataFrame:
+def load_ielts(split: str = "train", force_download: bool = False) -> pd.DataFrame:
     """Load the IELTS dataset and rename columns to match domain vocabulary.
 
     Raw columns:  prompt, essay, evaluation, band
     Domain cols:  question, essay, evaluation, band
     """
-    ds = load_dataset(_HF_DATASET, split=split)
+    kwargs = {}
+    if force_download:
+        kwargs["download_mode"] = "force_redownload"
+    ds = load_dataset(_HF_DATASET, split=split, **kwargs)
     df = ds.to_pandas().rename(columns=_COLUMN_MAP)
     return df
 
 
-def load_with_parsed_evaluations(split: str = "train") -> pd.DataFrame:
+def load_with_parsed_evaluations(split: str = "train", force_download: bool = False) -> pd.DataFrame:
     """Load and attach a ParsedEvaluation object for every row."""
-    df = load_ielts(split=split)
+    df = load_ielts(split=split, force_download=force_download)
     df["parsed_evaluation"] = df["evaluation"].apply(parse_evaluation)
     return df
 
