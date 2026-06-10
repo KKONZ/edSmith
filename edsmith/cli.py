@@ -174,7 +174,7 @@ def run_baseline(
     that data, recording the result as the root node in episodic memory.
     """
     from edsmith.config.session import SessionConfig
-    from edsmith.data.loader import build_baseline_feedback_df, load_with_parsed_evaluations
+    from edsmith.data.loader import build_baseline_feedback_df, clear_dataset_cache, load_with_parsed_evaluations
     from edsmith.data.loader import train_test_split as val_split
     from edsmith.memory.episodic import EpisodicMemory, EpisodicRecord, IterationMetrics
     from edsmith.metrics import compute_all
@@ -195,10 +195,11 @@ def run_baseline(
         typer.echo(f"Baseline already exists (session_id={existing[0].session_id}). Skipping.")
         raise typer.Exit()
 
-    typer.echo("Loading dataset (force re-download to bypass cache) …")
+    typer.echo("Clearing dataset cache and re-downloading …")
+    clear_dataset_cache()
     try:
-        train_full = load_with_parsed_evaluations(split="train", force_download=True)
-        test_df = load_with_parsed_evaluations(split="test", force_download=True)
+        train_full = load_with_parsed_evaluations(split="train")
+        test_df = load_with_parsed_evaluations(split="test")
     except Exception as exc:
         typer.echo(f"Dataset load failed: {exc}", err=True)
         raise typer.Exit(code=1)

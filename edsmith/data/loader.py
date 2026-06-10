@@ -17,27 +17,35 @@ _COLUMN_MAP = {
 }
 
 
-def load_ielts(split: str = "train", force_download: bool = False) -> pd.DataFrame:
+def clear_dataset_cache() -> None:
+    """Wipe the project-local HuggingFace dataset cache.
+
+    Call this once before loading any splits — never between split loads,
+    as Windows will deny deletion of arrow files still held open by the
+    previous load_dataset call.
+    """
+    if _DATASET_CACHE.exists():
+        shutil.rmtree(_DATASET_CACHE, ignore_errors=True)
+
+
+def load_ielts(split: str = "train") -> pd.DataFrame:
     """Load the IELTS dataset and rename columns to match domain vocabulary.
 
     Raw columns:  prompt, essay, evaluation, band
     Domain cols:  question, essay, evaluation, band
 
     Dataset is cached under data/hf_cache/ inside the project directory.
-    Pass force_download=True to wipe the cache and re-fetch (e.g. when the
-    dataset has been updated on HuggingFace Hub).
+    To force a fresh download call clear_dataset_cache() once before loading.
     """
-    if force_download and _DATASET_CACHE.exists():
-        shutil.rmtree(_DATASET_CACHE, ignore_errors=True)
     _DATASET_CACHE.mkdir(parents=True, exist_ok=True)
     ds = load_dataset(_HF_DATASET, split=split, cache_dir=str(_DATASET_CACHE))
     df = ds.to_pandas().rename(columns=_COLUMN_MAP)
     return df
 
 
-def load_with_parsed_evaluations(split: str = "train", force_download: bool = False) -> pd.DataFrame:
+def load_with_parsed_evaluations(split: str = "train") -> pd.DataFrame:
     """Load and attach a ParsedEvaluation object for every row."""
-    df = load_ielts(split=split, force_download=force_download)
+    df = load_ielts(split=split)
     df["parsed_evaluation"] = df["evaluation"].apply(parse_evaluation)
     return df
 
