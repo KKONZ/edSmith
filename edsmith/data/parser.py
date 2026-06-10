@@ -44,8 +44,9 @@ def _extract_score_from_heading(heading: str) -> float | None:
     if m:
         return _validated_score(m.group(1))
 
-    # **: 7.0  /  : 7.0  /  ** 7.0  at end of heading
-    m = re.search(r"[:\*]\*?\s*(\d+(?:\.\d+)?)\s*(?:\*|\n|$)", heading)
+    # **: 7.0  /  : 7.0  /  ** 7.0  at end of heading or before a dash separator
+    # e.g. "**Task Achievement:** 5.0 - The candidate..."
+    m = re.search(r"[:\*]\*?\s*(\d+(?:\.\d+)?)\s*(?:\*|\n|$|(?=\s*-))", heading)
     if m:
         return _validated_score(m.group(1))
 

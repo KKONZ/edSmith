@@ -211,8 +211,10 @@ def run_baseline(
     typer.echo(f"Dataset  train={len(train_df)}  val={len(val_df)}  test={len(test_df)}")
 
     typer.echo("Building baseline feedback DataFrame from parsed evaluations …")
+    possible = len(train_df) * 4
     feedback_df = build_baseline_feedback_df(train_df)
-    typer.echo(f"  {len(feedback_df)} component rows  ({feedback_df['score'].isna().sum()} dropped — missing score)")
+    skipped = possible - len(feedback_df)
+    typer.echo(f"  {len(feedback_df)} of {possible} component rows have parseable scores  ({skipped} skipped)")
 
     if mcp_url:
         from edsmith.mcp.client import MCPClient
