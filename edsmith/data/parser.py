@@ -57,6 +57,20 @@ def _extract_score_from_heading(heading: str) -> float | None:
     return None
 
 
+def _extract_score_from_body(body: str) -> float | None:
+    # "Suggested Band Score (Component): 6.5" or "Suggested Band Score: 6.0"
+    m = re.search(r"Suggested Band Score[^:\n]*:\s*(\d+(?:\.\d+)?)", body, re.IGNORECASE)
+    if m:
+        return _validated_score(m.group(1))
+
+    # "Band Score: 6.5" or "Band: 6.5"
+    m = re.search(r"Band(?:\s+Score)?[^:\n]*:\s*(\d+(?:\.\d+)?)", body, re.IGNORECASE)
+    if m:
+        return _validated_score(m.group(1))
+
+    return None
+
+
 # ------------------------------------------------------------------
 # Section splitting (verbatim user logic, components only)
 # ------------------------------------------------------------------
@@ -148,15 +162,20 @@ def parse_evaluation(eval_text: str) -> ParsedEvaluation:
     """Extract per-component text and scores from a raw evaluation string."""
     sections = split_evaluation(eval_text)
 
-    # Re-scan for heading lines to extract embedded scores.
     result = ParsedEvaluation()
     for key, label in COMPONENT_HEADINGS.items():
+        # Try score from heading line first
         pat = re.compile(
             rf"^[#\*\s\d\.]*{re.escape(label)}[^\n:]*:?[^\n]*(?:\n|$)",
             re.IGNORECASE | re.MULTILINE,
         )
         m = pat.search(eval_text)
         score = _extract_score_from_heading(m.group(0)) if m else None
+
+        # Fall back to "Suggested Band Score" pattern in the section body
+        if score is None:
+            score = _extract_score_from_body(sections[key])
+
         result.components[key] = ComponentEval(text=sections[key], score=score)
 
     return result
