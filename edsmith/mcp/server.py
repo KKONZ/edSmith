@@ -136,22 +136,38 @@ def compute_metrics(y_true: list[float], y_pred: list[float]) -> dict[str, float
 # Training implementation
 # ------------------------------------------------------------------
 
+def _log(msg: str) -> None:
+    import sys
+    print(f"[edsmith-train] {msg}", flush=True, file=sys.stderr)
+
+
 def _train(feedback_path: str, cfg: dict, output_dir: str) -> str:
+    import sys
     from coral_pytorch.losses import corn_loss
-    from transformers import TrainingArguments, Trainer, default_data_collator
+    from transformers import TrainingArguments, Trainer, DataCollatorWithPadding
     from unsloth import FastModel
 
+    _log(f"Python {sys.version}")
+    _log(f"Config: {cfg}")
+    _log(f"CUDA available: {torch.cuda.is_available()}")
+    if torch.cuda.is_available():
+        _log(f"GPU: {torch.cuda.get_device_name(0)}  VRAM: {torch.cuda.get_device_properties(0).total_memory / 1e9:.1f} GB")
+
+    _log("Loading feedback data …")
     df = pd.read_parquet(feedback_path)
     df = df.dropna(subset=["score"])
     df["label"] = df["score"].map(_BAND_TO_IDX)
     df = df.dropna(subset=["label"])
     df["label"] = df["label"].astype(int)
+    _log(f"Training rows: {len(df)}  label range: {df['label'].min()}–{df['label'].max()}")
 
+    _log(f"Loading model {cfg['model_name']} (4bit={cfg['load_in_4bit']}) …")
     model, tokenizer = FastModel.from_pretrained(
         model_name=cfg["model_name"],
         max_seq_length=cfg["max_seq_length"],
         load_in_4bit=cfg["load_in_4bit"],
     )
+    _log("Model loaded. Applying LoRA …")
     model = FastModel.get_peft_model(
         model,
         r=cfg["lora_r"],
@@ -160,8 +176,10 @@ def _train(feedback_path: str, cfg: dict, output_dir: str) -> str:
         lora_dropout=0.0,
         bias="none",
     )
+    _log(f"LoRA applied. hidden_size={model.config.hidden_size}")
 
     corn_head = torch.nn.Linear(model.config.hidden_size, _NUM_CLASSES - 1).to(model.device)
+    _log(f"CORN head on device: {model.device}")
 
     class _CORNTrainer(Trainer):
         def compute_loss(self, model, inputs, return_outputs=False, **kwargs):
@@ -171,6 +189,10 @@ def _train(feedback_path: str, cfg: dict, output_dir: str) -> str:
             logits = corn_head(last_hidden)
             loss = corn_loss(logits, labels, num_classes=_NUM_CLASSES)
             return (loss, outputs) if return_outputs else loss
+
+    _log(f"Tokenizing {len(df)} examples (max_length={cfg['max_seq_length']}) …")
+    dataset = _ScorerDataset(df, tokenizer, cfg["max_seq_length"])
+    _log(f"Dataset ready. Building trainer …")
 
     training_args = TrainingArguments(
         output_dir=output_dir,
@@ -186,16 +208,19 @@ def _train(feedback_path: str, cfg: dict, output_dir: str) -> str:
     trainer = _CORNTrainer(
         model=model,
         args=training_args,
-        train_dataset=_ScorerDataset(df, tokenizer, cfg["max_seq_length"]),
-        data_collator=default_data_collator,
+        train_dataset=dataset,
+        data_collator=DataCollatorWithPadding(tokenizer),
     )
+    _log("Starting training …")
     trainer.train()
+    _log("Training complete. Saving model …")
 
     out = Path(output_dir)
     out.mkdir(parents=True, exist_ok=True)
     model.save_pretrained(str(out))
     tokenizer.save_pretrained(str(out))
     torch.save(corn_head.state_dict(), str(out / "corn_head.pt"))
+    _log(f"Saved to {out}")
 
     return str(out)
 
