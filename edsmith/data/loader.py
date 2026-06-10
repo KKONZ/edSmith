@@ -4,23 +4,17 @@ import shutil
 from pathlib import Path
 
 import pandas as pd
-from datasets import config as ds_config
 from datasets import load_dataset
 
 from edsmith.data.parser import ParsedEvaluation, parse_evaluation
 
 _HF_DATASET = "chillies/IELTS-writing-task-2-evaluation"
+_PROJECT_ROOT = Path(__file__).resolve().parents[2]
+_DATASET_CACHE = _PROJECT_ROOT / "data" / "hf_cache"
 
 _COLUMN_MAP = {
     "prompt": "question",
 }
-
-
-def clear_dataset_cache() -> None:
-    """Delete the local HuggingFace cache for the IELTS dataset."""
-    cache_dir = Path(ds_config.HF_DATASETS_CACHE) / "chillies___ielts-writing-task-2-evaluation"
-    if cache_dir.exists():
-        shutil.rmtree(cache_dir, ignore_errors=True)
 
 
 def load_ielts(split: str = "train", force_download: bool = False) -> pd.DataFrame:
@@ -28,10 +22,15 @@ def load_ielts(split: str = "train", force_download: bool = False) -> pd.DataFra
 
     Raw columns:  prompt, essay, evaluation, band
     Domain cols:  question, essay, evaluation, band
+
+    Dataset is cached under data/hf_cache/ inside the project directory.
+    Pass force_download=True to wipe the cache and re-fetch (e.g. when the
+    dataset has been updated on HuggingFace Hub).
     """
-    if force_download:
-        clear_dataset_cache()
-    ds = load_dataset(_HF_DATASET, split=split)
+    if force_download and _DATASET_CACHE.exists():
+        shutil.rmtree(_DATASET_CACHE, ignore_errors=True)
+    _DATASET_CACHE.mkdir(parents=True, exist_ok=True)
+    ds = load_dataset(_HF_DATASET, split=split, cache_dir=str(_DATASET_CACHE))
     df = ds.to_pandas().rename(columns=_COLUMN_MAP)
     return df
 

@@ -30,6 +30,9 @@ env/
 *.parquet
 *.arrow
 
+# HuggingFace dataset cache (project-local)
+data/hf_cache/
+
 # edsmith drive data (episodic records, model checkpoints — stays on Drive)
 drive/
 episodic/
