@@ -27,10 +27,12 @@ Setup in Colab (two cells):
 
 --- Cell 2: start server (blocking) ---
     import unsloth  # must be first — patches transformers before any other import
-    import nest_asyncio
-    nest_asyncio.apply()
+    import threading
     from edsmith.mcp.server import mcp
-    mcp.run(transport="http", port=8000)
+
+    t = threading.Thread(target=mcp.run, kwargs={"transport": "http", "port": 8000}, daemon=True)
+    t.start()
+    t.join()
 
 Then on your local machine:
     edsmith run-session --config session.yaml --mcp-url https://<tunnel-id>.trycloudflare.com/mcp

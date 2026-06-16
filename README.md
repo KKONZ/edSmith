@@ -49,10 +49,14 @@ for line in proc.stderr:
 *Cell 2 — start the server (blocking):*
 ```python
 import unsloth  # must be imported before transformers is loaded anywhere
-import nest_asyncio
-nest_asyncio.apply()
+import threading
 from edsmith.mcp.server import mcp
-mcp.run(transport="http", port=8000)
+
+# Run in a thread so anyio can create its own event loop
+# (Colab's kernel already owns the main-thread event loop)
+t = threading.Thread(target=mcp.run, kwargs={"transport": "http", "port": 8000}, daemon=True)
+t.start()
+t.join()
 ```
 
 Copy the printed MCP URL. The URL is the only access control — keep it private while the session is running.
