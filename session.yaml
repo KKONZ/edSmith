@@ -40,7 +40,8 @@ sampling:
   reflection_correct_ratio: 0.3
   reflection_large_miss_ratio: 0.3
   reflection_n: 30
-  size: null
+  size: 2000
+  test_ratio: 0.15
   validation_ratio: 0.15
 scorer:
   gradient_accumulation_steps: 4

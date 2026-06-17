@@ -113,6 +113,9 @@ def run_session(
 
     if cfg.sampling.size is not None:
         train_full, test_df = apply_size_limit(train_full, test_df, cfg.sampling.size, cfg.sampling.random_state)
+    if cfg.sampling.test_ratio is not None:
+        n = max(1, round(len(test_df) * cfg.sampling.test_ratio))
+        test_df = test_df.sample(n=n, random_state=cfg.sampling.random_state).reset_index(drop=True)
 
     train_df, val_df = val_split(
         train_full,
@@ -209,6 +212,9 @@ def run_baseline(
 
     if cfg.sampling.size is not None:
         train_full, test_df = apply_size_limit(train_full, test_df, cfg.sampling.size, cfg.sampling.random_state)
+    if cfg.sampling.test_ratio is not None:
+        n = max(1, round(len(test_df) * cfg.sampling.test_ratio))
+        test_df = test_df.sample(n=n, random_state=cfg.sampling.random_state).reset_index(drop=True)
 
     train_df, val_df = val_split(
         train_full,

@@ -27,9 +27,10 @@ class CouncilConfig(BaseModel):
 
 
 class SamplingConfig(BaseModel):
-    size: int | None = None          # None = full training set
+    size: int | None = None          # None = full dataset; caps train+val+test proportionally
     random_state: int = 42
     validation_ratio: Annotated[float, Field(gt=0, lt=1)] = 0.15
+    test_ratio: Annotated[float, Field(gt=0, lt=1)] | None = None  # fraction of test set to use; None = all
 
     # Stratified reflection sample ratios (must sum to 1.0)
     reflection_correct_ratio: float = 0.30
