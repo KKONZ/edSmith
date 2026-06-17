@@ -112,7 +112,8 @@ class MCPClient:
     async def _call_tool(self, name: str, arguments: dict) -> str:
         async with Client(self._url) as client:
             result = await client.call_tool(name, arguments)
-        for item in result:
+        items = result.content if hasattr(result, "content") else result
+        for item in items:
             if hasattr(item, "text"):
                 return item.text
         raise RuntimeError(f"Tool {name!r} returned no text content")
