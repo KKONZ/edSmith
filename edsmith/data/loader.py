@@ -40,6 +40,7 @@ def load_ielts(split: str = "train") -> pd.DataFrame:
     _DATASET_CACHE.mkdir(parents=True, exist_ok=True)
     ds = load_dataset(_HF_DATASET, split=split, cache_dir=str(_DATASET_CACHE))
     df = ds.to_pandas().rename(columns=_COLUMN_MAP)
+    df["band"] = df["band"].str.strip()
     return df
 
 
@@ -86,9 +87,9 @@ def train_test_split(
     session.  Both splits are fixed for the duration of a session to eliminate
     random effects across iterations.
     """
-    val = (
-        df.groupby("band", group_keys=False)
-        .apply(lambda g: g.sample(frac=validation_ratio, random_state=random_state))
-    )
-    train = df.drop(val.index)
-    return train.reset_index(drop=True), val.reset_index(drop=True)
+    val_idx: list[int] = []
+    for _, group in df.groupby("band"):
+        val_idx.extend(group.sample(frac=validation_ratio, random_state=random_state).index.tolist())
+    val = df.loc[val_idx].reset_index(drop=True)
+    train = df.drop(val_idx).reset_index(drop=True)
+    return train, val
