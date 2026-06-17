@@ -149,12 +149,10 @@ def _log(msg: str) -> None:
 
 
 def _train(feedback_path: str, cfg: dict, output_dir: str) -> str:
-    from unsloth import FastModel  # must be first — patches transformers/torch
-    import numpy as np
+    from unsloth import FastLanguageModel  # must be first — patches transformers/torch
     import pandas as pd
     import torch
-    from coral_pytorch.losses import corn_loss
-    from transformers import TrainingArguments, Trainer, default_data_collator
+    from trl import SFTTrainer, SFTConfig
 
     _log(f"Python {sys.version}")
     _log(f"Config: {cfg}")
@@ -170,55 +168,42 @@ def _train(feedback_path: str, cfg: dict, output_dir: str) -> str:
     df["label"] = df["label"].astype(int)
     _log(f"Training rows: {len(df)}  label range: {df['label'].min()}–{df['label'].max()}")
 
-    _log(f"Loading model {cfg['model_name']} (4bit={cfg['load_in_4bit']}) …")
-    model, tokenizer = FastModel.from_pretrained(
+    _log(f"Loading model {cfg['model_name']} (4bit) …")
+    model, tokenizer = FastLanguageModel.from_pretrained(
         model_name=cfg["model_name"],
         max_seq_length=cfg["max_seq_length"],
-        load_in_4bit=cfg["load_in_4bit"],
+        load_in_4bit=True,
     )
     _log("Model loaded. Applying LoRA …")
-    model = FastModel.get_peft_model(
+    model = FastLanguageModel.get_peft_model(
         model,
         r=cfg["lora_r"],
         lora_alpha=cfg["lora_alpha"],
         target_modules=["q_proj", "v_proj", "k_proj", "o_proj"],
         lora_dropout=0.0,
         bias="none",
+        use_gradient_checkpointing="unsloth",
     )
     _log(f"LoRA applied. hidden_size={model.config.hidden_size}")
-
-    corn_head = torch.nn.Linear(model.config.hidden_size, _NUM_CLASSES - 1).to(model.device)
-    _log(f"CORN head on device: {model.device}")
-
-    class _CORNTrainer(Trainer):
-        def compute_loss(self, model, inputs, return_outputs=False, **kwargs):
-            labels = inputs.pop("labels")
-            outputs = model(**inputs, output_hidden_states=True)
-            last_hidden = outputs.hidden_states[-1][:, -1, :]
-            logits = corn_head(last_hidden)
-            loss = corn_loss(logits, labels, num_classes=_NUM_CLASSES)
-            return (loss, outputs) if return_outputs else loss
 
     _log(f"Tokenizing {len(df)} examples (max_length={cfg['max_seq_length']}) …")
     dataset = _ScorerDataset(df, tokenizer, cfg["max_seq_length"])
     _log(f"Dataset ready ({len(dataset)} items). Building trainer …")
 
-    training_args = TrainingArguments(
-        output_dir=output_dir,
-        max_steps=cfg["max_steps"],
-        per_device_train_batch_size=cfg["per_device_train_batch_size"],
-        gradient_accumulation_steps=cfg["gradient_accumulation_steps"],
-        learning_rate=cfg["learning_rate"],
-        logging_steps=10,
-        save_strategy="no",
-        report_to="none",
-    )
-
-    trainer = _CORNTrainer(
+    trainer = SFTTrainer(
         model=model,
-        args=training_args,
+        args=SFTConfig(
+            output_dir=output_dir,
+            max_steps=cfg["max_steps"],
+            per_device_train_batch_size=cfg["per_device_train_batch_size"],
+            gradient_accumulation_steps=cfg["gradient_accumulation_steps"],
+            learning_rate=cfg["learning_rate"],
+            logging_steps=10,
+            save_strategy="no",
+            report_to="none",
+        ),
         train_dataset=dataset,
-        data_collator=default_data_collator,
+        compute_loss_func=cfg.get("compute_loss_func"),
     )
     _log("Starting training …")
     trainer.train()
@@ -228,7 +213,6 @@ def _train(feedback_path: str, cfg: dict, output_dir: str) -> str:
     out.mkdir(parents=True, exist_ok=True)
     model.save_pretrained(str(out))
     tokenizer.save_pretrained(str(out))
-    torch.save(corn_head.state_dict(), str(out / "corn_head.pt"))
     _log(f"Saved to {out}")
 
     return str(out)
