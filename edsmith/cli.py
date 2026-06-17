@@ -37,7 +37,7 @@ def run_session(
     from edsmith.agents.phase1.feedback import FeedbackAgent
     from edsmith.agents.phase2.reflection import ReflectionAgent
     from edsmith.config.session import SessionConfig
-    from edsmith.data.loader import load_with_parsed_evaluations
+    from edsmith.data.loader import apply_size_limit, load_with_parsed_evaluations
     from edsmith.data.loader import train_test_split as val_split
     from edsmith.memory.episodic import EpisodicMemory
     from edsmith.memory.semantic import SemanticMemory
@@ -111,6 +111,9 @@ def run_session(
         typer.echo(f"Dataset load failed: {exc}", err=True)
         raise typer.Exit(code=1)
 
+    if cfg.sampling.size is not None:
+        train_full, test_df = apply_size_limit(train_full, test_df, cfg.sampling.size, cfg.sampling.random_state)
+
     train_df, val_df = val_split(
         train_full,
         validation_ratio=cfg.sampling.validation_ratio,
@@ -174,7 +177,7 @@ def run_baseline(
     that data, recording the result as the root node in episodic memory.
     """
     from edsmith.config.session import SessionConfig
-    from edsmith.data.loader import build_baseline_feedback_df, clear_dataset_cache, load_with_parsed_evaluations
+    from edsmith.data.loader import apply_size_limit, build_baseline_feedback_df, clear_dataset_cache, load_with_parsed_evaluations
     from edsmith.data.loader import train_test_split as val_split
     from edsmith.memory.episodic import EpisodicMemory, EpisodicRecord, IterationMetrics
     from edsmith.metrics import compute_all
@@ -203,6 +206,9 @@ def run_baseline(
     except Exception as exc:
         typer.echo(f"Dataset load failed: {exc}", err=True)
         raise typer.Exit(code=1)
+
+    if cfg.sampling.size is not None:
+        train_full, test_df = apply_size_limit(train_full, test_df, cfg.sampling.size, cfg.sampling.random_state)
 
     train_df, val_df = val_split(
         train_full,

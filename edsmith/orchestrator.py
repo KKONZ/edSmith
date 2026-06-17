@@ -271,11 +271,7 @@ class Orchestrator:
     # ------------------------------------------------------------------
 
     def _get_sample(self) -> pd.DataFrame:
-        cfg = self._config.sampling
-        if cfg.size is None:
-            return self._train_df
-        n = min(cfg.size, len(self._train_df))
-        return self._train_df.sample(n=n, random_state=cfg.random_state)
+        return self._train_df
 
     def _init_record(self, parent_session_id: str | None) -> EpisodicRecord:
         session_id = self._config.session_id or str(uuid.uuid4())[:8]

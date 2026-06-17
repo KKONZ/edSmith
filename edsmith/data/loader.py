@@ -75,6 +75,24 @@ def build_baseline_feedback_df(df: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(records)
 
 
+def apply_size_limit(
+    train_full: pd.DataFrame,
+    test_df: pd.DataFrame,
+    size: int,
+    random_state: int = 42,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Proportionally subsample train_full and test_df so their combined row
+    count is approximately *size*, preserving the original train/test ratio."""
+    total = len(train_full) + len(test_df)
+    ratio = size / total
+    train_n = max(1, round(len(train_full) * ratio))
+    test_n = max(1, round(len(test_df) * ratio))
+    return (
+        train_full.sample(n=min(train_n, len(train_full)), random_state=random_state).reset_index(drop=True),
+        test_df.sample(n=min(test_n, len(test_df)), random_state=random_state).reset_index(drop=True),
+    )
+
+
 def train_test_split(
     df: pd.DataFrame,
     validation_ratio: float = 0.15,
