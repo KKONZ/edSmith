@@ -154,7 +154,7 @@ def _train(feedback_path: str, cfg: dict, output_dir: str) -> str:
     import pandas as pd
     import torch
     from coral_pytorch.losses import corn_loss
-    from transformers import TrainingArguments, Trainer, DataCollatorWithPadding
+    from transformers import TrainingArguments, Trainer, default_data_collator
 
     _log(f"Python {sys.version}")
     _log(f"Config: {cfg}")
@@ -218,7 +218,7 @@ def _train(feedback_path: str, cfg: dict, output_dir: str) -> str:
         model=model,
         args=training_args,
         train_dataset=dataset,
-        data_collator=DataCollatorWithPadding(tokenizer),
+        data_collator=default_data_collator,
     )
     _log("Starting training …")
     trainer.train()
@@ -306,9 +306,10 @@ class _ScorerDataset:
             ],
             truncation=True,
             max_length=max_length,
-            padding=False,
+            padding="max_length",
+            return_tensors="pt",
         )
-        self._labels = df["label"].tolist()
+        self._labels = torch.tensor(df["label"].tolist(), dtype=torch.long)
 
     def __len__(self) -> int:
         return len(self._labels)

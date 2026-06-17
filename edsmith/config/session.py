@@ -51,7 +51,7 @@ class SamplingConfig(BaseModel):
 
 class ScorerConfig(BaseModel):
     model_name: str = "unsloth/Qwen3-1.7B"
-    max_seq_length: int = 4096
+    max_seq_length: int = 512
     load_in_4bit: bool = True
     lora_r: int = 16
     lora_alpha: int = 16
