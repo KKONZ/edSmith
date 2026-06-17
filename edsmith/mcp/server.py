@@ -179,14 +179,14 @@ def _train(feedback_path: str, cfg: dict, output_dir: str) -> str:
         model,
         r=cfg["lora_r"],
         lora_alpha=cfg["lora_alpha"],
-        target_modules=["q_proj", "v_proj", "k_proj", "o_proj"],
+        target_modules=["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
         lora_dropout=0.0,
         bias="none",
         use_gradient_checkpointing="unsloth",
     )
     _log(f"LoRA applied. hidden_size={model.config.hidden_size}")
 
-    dataset = _build_dataset(df)
+    dataset = _build_dataset(df, tokenizer)
     _log(f"Dataset ready ({len(dataset)} items). Building trainer …")
 
     trainer = SFTTrainer(
@@ -198,6 +198,9 @@ def _train(feedback_path: str, cfg: dict, output_dir: str) -> str:
             gradient_accumulation_steps=cfg["gradient_accumulation_steps"],
             learning_rate=cfg["learning_rate"],
             max_seq_length=cfg["max_seq_length"],
+            warmup_steps=cfg.get("warmup_steps", 5),
+            optim="adamw_8bit",
+            lr_scheduler_type="linear",
             logging_steps=10,
             save_strategy="no",
             report_to="none",
@@ -282,13 +285,18 @@ def _evaluate(model_path: str, eval_data_path: str) -> tuple[list[float], list[f
 # Dataset
 # ------------------------------------------------------------------
 
-def _build_dataset(df):
+def _build_dataset(df, tokenizer):
     from datasets import Dataset
+
+    def _to_chat(row):
+        messages = [
+            {"role": "user", "content": _format_input(row["question"], row["essay"], row["component"])},
+            {"role": "assistant", "content": str(_BANDS[row["label"]])},
+        ]
+        return tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=False)
+
     return Dataset.from_dict({
-        "text": [
-            _format_input(row["question"], row["essay"], row["component"])
-            for _, row in df.iterrows()
-        ],
+        "text": [_to_chat(row) for _, row in df.iterrows()],
         "label": df["label"].tolist(),  # ordinal class index — used by CORN loss via compute_loss_func
     })
 
