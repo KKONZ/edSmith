@@ -83,7 +83,7 @@ class MCPClient:
         result_text = await self._call_tool(
             "train_scorer",
             {
-                "feedback_data": _df_to_b64(feedback_df),
+                "feedback_data": _df_to_b64(feedback_df[["question", "essay", "component", "score"]]),
                 "scorer_config": json.dumps(scorer_config.model_dump()),
                 "output_dir": output_dir,
             },
@@ -99,7 +99,7 @@ class MCPClient:
             "evaluate_scorer",
             {
                 "model_path": model_path,
-                "eval_data": _df_to_b64(df),
+                "eval_data": _df_to_b64(df[["question", "essay", "band"]]),
             },
         )
         result = json.loads(result_text)
