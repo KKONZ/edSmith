@@ -299,10 +299,11 @@ class _ScorerDataset:
         return len(self._labels)
 
     def __getitem__(self, idx: int) -> dict:
+        input_ids = self._encodings["input_ids"][idx]
         return {
-            "input_ids": self._encodings["input_ids"][idx],
+            "input_ids": input_ids,
             "attention_mask": self._encodings["attention_mask"][idx],
-            "labels": self._labels[idx],
+            "labels": input_ids.clone(),  # swap for class index when CORN loss is wired in
         }
 
 
