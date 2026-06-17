@@ -186,8 +186,7 @@ def _train(feedback_path: str, cfg: dict, output_dir: str) -> str:
     )
     _log(f"LoRA applied. hidden_size={model.config.hidden_size}")
 
-    _log(f"Tokenizing {len(df)} examples (max_length={cfg['max_seq_length']}) …")
-    dataset = _ScorerDataset(df, tokenizer, cfg["max_seq_length"])
+    dataset = _build_dataset(df)
     _log(f"Dataset ready ({len(dataset)} items). Building trainer …")
 
     trainer = SFTTrainer(
@@ -198,11 +197,13 @@ def _train(feedback_path: str, cfg: dict, output_dir: str) -> str:
             per_device_train_batch_size=cfg["per_device_train_batch_size"],
             gradient_accumulation_steps=cfg["gradient_accumulation_steps"],
             learning_rate=cfg["learning_rate"],
+            max_seq_length=cfg["max_seq_length"],
             logging_steps=10,
             save_strategy="no",
             report_to="none",
         ),
         train_dataset=dataset,
+        dataset_text_field="text",
         compute_loss_func=cfg.get("compute_loss_func"),
     )
     _log("Starting training …")
@@ -281,30 +282,15 @@ def _evaluate(model_path: str, eval_data_path: str) -> tuple[list[float], list[f
 # Dataset
 # ------------------------------------------------------------------
 
-class _ScorerDataset:
-    def __init__(self, df, tokenizer, max_length: int) -> None:
-        self._encodings = tokenizer(
-            [
-                _format_input(row["question"], row["essay"], row["component"])
-                for _, row in df.iterrows()
-            ],
-            truncation=True,
-            max_length=max_length,
-            padding="max_length",
-            return_tensors="pt",
-        )
-        self._labels = torch.tensor(df["label"].tolist(), dtype=torch.long)
-
-    def __len__(self) -> int:
-        return len(self._labels)
-
-    def __getitem__(self, idx: int) -> dict:
-        input_ids = self._encodings["input_ids"][idx]
-        return {
-            "input_ids": input_ids,
-            "attention_mask": self._encodings["attention_mask"][idx],
-            "labels": input_ids.clone(),  # swap for class index when CORN loss is wired in
-        }
+def _build_dataset(df):
+    from datasets import Dataset
+    return Dataset.from_dict({
+        "text": [
+            _format_input(row["question"], row["essay"], row["component"])
+            for _, row in df.iterrows()
+        ],
+        "label": df["label"].tolist(),  # ordinal class index — used by CORN loss via compute_loss_func
+    })
 
 
 # ------------------------------------------------------------------
