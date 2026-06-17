@@ -227,30 +227,21 @@ def _train(feedback_path: str, cfg: dict, output_dir: str) -> str:
 # ------------------------------------------------------------------
 
 def _evaluate(model_path: str, eval_data_path: str) -> tuple[list[float], list[float]]:
-    from unsloth import FastModel  # must be first
+    from unsloth import FastLanguageModel  # must be first
     import numpy as np
     import pandas as pd
     import torch
-    from coral_pytorch.dataset import corn_label_from_logits
 
     _log(f"Evaluating model at {model_path} …")
     df = pd.read_parquet(eval_data_path)
     _log(f"Eval rows: {len(df)}")
 
-    model, tokenizer = FastModel.from_pretrained(
+    model, tokenizer = FastLanguageModel.from_pretrained(
         model_name=model_path,
         max_seq_length=4096,
         load_in_4bit=True,
     )
-
-    hidden_size = model.config.hidden_size
-    corn_head = torch.nn.Linear(hidden_size, _NUM_CLASSES - 1).to(model.device)
-    corn_head.load_state_dict(
-        torch.load(str(Path(model_path) / "corn_head.pt"), map_location=model.device)
-    )
-
-    model.eval()
-    corn_head.eval()
+    FastLanguageModel.for_inference(model)
 
     y_true: list[float] = []
     y_pred: list[float] = []
@@ -259,22 +250,22 @@ def _evaluate(model_path: str, eval_data_path: str) -> tuple[list[float], list[f
         for _, row in df.iterrows():
             component_preds: list[float] = []
             for component in COMPONENT_HEADINGS:
-                text = _format_input(row["question"], row["essay"], component)
-                enc = tokenizer(
-                    text,
-                    return_tensors="pt",
-                    truncation=True,
-                    max_length=4096,
-                ).to(model.device)
-
-                out = model(**enc, output_hidden_states=True)
-                last_hidden = out.hidden_states[-1][:, -1, :]
-                logits = corn_head(last_hidden)
-                idx = int(corn_label_from_logits(logits).item())
-                component_preds.append(_BANDS[min(idx, len(_BANDS) - 1)])
+                messages = [{"role": "user", "content": _format_input(row["question"], row["essay"], component)}]
+                prompt = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+                enc = tokenizer(prompt, return_tensors="pt", truncation=True, max_length=4096).to(model.device)
+                out = model.generate(**enc, max_new_tokens=8, do_sample=False)
+                generated = tokenizer.decode(out[0][enc["input_ids"].shape[1]:], skip_special_tokens=True).strip()
+                try:
+                    pred = max(1.0, min(9.0, round(float(generated) * 2) / 2))
+                except ValueError:
+                    pred = 5.0
+                component_preds.append(pred)
 
             pred_band = round(float(np.mean(component_preds)) * 2) / 2
-            y_true.append(float(row["band"]))
+            try:
+                y_true.append(float(row["band"]))
+            except ValueError:
+                continue
             y_pred.append(pred_band)
 
     _log(f"Evaluation complete. {len(y_true)} predictions.")
