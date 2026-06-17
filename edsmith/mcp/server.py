@@ -226,6 +226,9 @@ def _train(feedback_path: str, cfg: dict, output_dir: str) -> str:
 # Evaluation implementation
 # ------------------------------------------------------------------
 
+_EVAL_BATCH_SIZE = 8
+
+
 def _evaluate(model_path: str, eval_data_path: str) -> tuple[list[float], list[float]]:
     from unsloth import FastLanguageModel  # must be first
     import numpy as np
@@ -242,31 +245,49 @@ def _evaluate(model_path: str, eval_data_path: str) -> tuple[list[float], list[f
         load_in_4bit=True,
     )
     FastLanguageModel.for_inference(model)
+    model.generation_config.max_length = None  # suppress max_new_tokens/max_length conflict
+    tokenizer.padding_side = "left"
 
+    n_components = len(COMPONENT_HEADINGS)
+
+    # Build all prompts upfront and filter rows with unparseable bands
+    valid_bands: list[float] = []
+    all_prompts: list[str] = []
+    for _, row in df.iterrows():
+        try:
+            band = float(row["band"])
+        except ValueError:
+            continue
+        valid_bands.append(band)
+        for component in COMPONENT_HEADINGS:
+            messages = [{"role": "user", "content": _format_input(row["question"], row["essay"], component)}]
+            all_prompts.append(tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True))
+
+    # Batched inference
+    all_generated: list[str] = []
+    with torch.no_grad():
+        for i in range(0, len(all_prompts), _EVAL_BATCH_SIZE):
+            batch = all_prompts[i : i + _EVAL_BATCH_SIZE]
+            enc = tokenizer(batch, return_tensors="pt", truncation=True, max_length=4096, padding=True).to(model.device)
+            out = model.generate(**enc, max_new_tokens=8, do_sample=False)
+            input_len = enc["input_ids"].shape[1]
+            for o in out:
+                all_generated.append(tokenizer.decode(o[input_len:], skip_special_tokens=True).strip())
+            _log(f"  eval batch {i // _EVAL_BATCH_SIZE + 1}/{-(-len(all_prompts) // _EVAL_BATCH_SIZE)}")
+
+    # Aggregate component predictions per row
     y_true: list[float] = []
     y_pred: list[float] = []
-
-    with torch.no_grad():
-        for _, row in df.iterrows():
-            component_preds: list[float] = []
-            for component in COMPONENT_HEADINGS:
-                messages = [{"role": "user", "content": _format_input(row["question"], row["essay"], component)}]
-                prompt = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
-                enc = tokenizer(prompt, return_tensors="pt", truncation=True, max_length=4096).to(model.device)
-                out = model.generate(**enc, max_new_tokens=8, do_sample=False)
-                generated = tokenizer.decode(out[0][enc["input_ids"].shape[1]:], skip_special_tokens=True).strip()
-                try:
-                    pred = max(1.0, min(9.0, round(float(generated) * 2) / 2))
-                except ValueError:
-                    pred = 5.0
-                component_preds.append(pred)
-
-            pred_band = round(float(np.mean(component_preds)) * 2) / 2
+    for i, band in enumerate(valid_bands):
+        component_preds: list[float] = []
+        for j in range(n_components):
             try:
-                y_true.append(float(row["band"]))
+                pred = max(1.0, min(9.0, round(float(all_generated[i * n_components + j]) * 2) / 2))
             except ValueError:
-                continue
-            y_pred.append(pred_band)
+                pred = 5.0
+            component_preds.append(pred)
+        y_true.append(band)
+        y_pred.append(round(float(np.mean(component_preds)) * 2) / 2)
 
     _log(f"Evaluation complete. {len(y_true)} predictions.")
     return y_true, y_pred
