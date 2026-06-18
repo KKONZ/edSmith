@@ -254,7 +254,8 @@ def _evaluate(model_path: str, eval_data_path: str) -> tuple[list[float], list[f
         load_in_4bit=True,
     )
     FastLanguageModel.for_inference(model)
-    #model.generation_config.max_new_tokens = 8
+    model.generation_config.max_new_tokens = 8
+    model.generation_config.max_length = None
     tokenizer.padding_side = "left"
 
     target_components = [component] if component else list(COMPONENT_HEADINGS.keys())

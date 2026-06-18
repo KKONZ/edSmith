@@ -32,7 +32,14 @@ def adjacent_accuracy(
 
 
 def quadratic_weighted_kappa(y_true: list[float], y_pred: list[float]) -> float:
-    return float(cohen_kappa_score(y_true, y_pred, weights="quadratic"))
+    # Convert half-band floats to integers (5.0→10, 5.5→11) so sklearn sees
+    # multiclass, not continuous — avoids "mix of continuous and binary" error.
+    y_true_int = [round(v * 2) for v in y_true]
+    y_pred_int = [round(v * 2) for v in y_pred]
+    try:
+        return float(cohen_kappa_score(y_true_int, y_pred_int, weights="quadratic"))
+    except ValueError:
+        return float("nan")
 
 
 def standardized_mean_difference(y_true: list[float], y_pred: list[float]) -> float:
