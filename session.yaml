@@ -41,7 +41,7 @@ sampling:
   reflection_large_miss_ratio: 0.3
   reflection_n: 30
   size: 2000
-  test_ratio: 0.15
+  test_ratio: 0.05
   validation_ratio: 0.15
 scorer:
   component: task_response
