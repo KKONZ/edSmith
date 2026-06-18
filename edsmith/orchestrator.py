@@ -212,17 +212,15 @@ class Orchestrator:
         loop = asyncio.get_event_loop()
         model_path = state["model_path"]
 
-        component = self._config.scorer.component
-
         # Validation
         y_true_val, y_pred_val = await loop.run_in_executor(
-            None, lambda: self._evaluator_fn(model_path, self._val_df, component)
+            None, lambda: self._evaluator_fn(model_path, self._val_df)
         )
         val_metrics = compute_all(y_true_val, y_pred_val)
 
         # Test — compute full metrics but only surface the summary dict
         y_true_test, y_pred_test = await loop.run_in_executor(
-            None, lambda: self._evaluator_fn(model_path, self._test_df, component)
+            None, lambda: self._evaluator_fn(model_path, self._test_df)
         )
         test_summary = compute_all(y_true_test, y_pred_test)
 

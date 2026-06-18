@@ -105,7 +105,6 @@ async def train_scorer(
 async def evaluate_scorer(
     model_path: str,
     eval_data: str,
-    component: str | None = None,
 ) -> str:
     """Run the trained Scorer on an evaluation set and return predictions.
 
@@ -124,7 +123,7 @@ async def evaluate_scorer(
         tmp_path = f.name
     try:
         loop = asyncio.get_event_loop()
-        y_true, y_pred = await loop.run_in_executor(None, _evaluate, model_path, tmp_path, component)
+        y_true, y_pred = await loop.run_in_executor(None, _evaluate, model_path, tmp_path)
         return json.dumps({"y_true": y_true, "y_pred": y_pred})
     finally:
         os.unlink(tmp_path)
@@ -221,6 +220,7 @@ def _train(feedback_path: str, cfg: dict, output_dir: str) -> str:
     out.mkdir(parents=True, exist_ok=True)
     model.save_pretrained(str(out))
     tokenizer.save_pretrained(str(out))
+    (out / "edsmith_config.json").write_text(json.dumps({"component": cfg.get("component")}))
     _log(f"Saved to {out}")
 
     return str(out)
@@ -233,13 +233,18 @@ def _train(feedback_path: str, cfg: dict, output_dir: str) -> str:
 _EVAL_BATCH_SIZE = 8
 
 
-def _evaluate(model_path: str, eval_data_path: str, component: str | None = None) -> tuple[list[float], list[float]]:
+def _evaluate(model_path: str, eval_data_path: str) -> tuple[list[float], list[float]]:
     from unsloth import FastLanguageModel  # must be first
     import numpy as np
     import pandas as pd
     import torch
 
     _log(f"Evaluating model at {model_path} …")
+    edsmith_cfg_path = Path(model_path) / "edsmith_config.json"
+    component: str | None = None
+    if edsmith_cfg_path.exists():
+        component = json.loads(edsmith_cfg_path.read_text()).get("component")
+    _log(f"Component: {component or 'all'}")
     df = pd.read_parquet(eval_data_path)
     _log(f"Eval rows: {len(df)}")
 

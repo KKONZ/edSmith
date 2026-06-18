@@ -62,13 +62,12 @@ class MCPClient:
 
     @property
     def evaluator_fn(self) -> Callable:
-        """Synchronous callable: (model_path, df, component=None) -> (y_true, y_pred)."""
+        """Synchronous callable: (model_path, df) -> (y_true, y_pred)."""
         def _evaluate(
             model_path: str,
             df: pd.DataFrame,
-            component: str | None = None,
         ) -> tuple[list[float], list[float]]:
-            return asyncio.run(self._aevaluate(model_path, df, component))
+            return asyncio.run(self._aevaluate(model_path, df))
         return _evaluate
 
     # ------------------------------------------------------------------
@@ -95,15 +94,14 @@ class MCPClient:
         self,
         model_path: str,
         df: pd.DataFrame,
-        component: str | None = None,
     ) -> tuple[list[float], list[float]]:
-        args: dict = {
-            "model_path": model_path,
-            "eval_data": _df_to_b64(df[["question", "essay", "band"]]),
-        }
-        if component:
-            args["component"] = component
-        result_text = await self._call_tool("evaluate_scorer", args)
+        result_text = await self._call_tool(
+            "evaluate_scorer",
+            {
+                "model_path": model_path,
+                "eval_data": _df_to_b64(df[["question", "essay", "band"]]),
+            },
+        )
         result = json.loads(result_text)
         return result["y_true"], result["y_pred"]
 
