@@ -112,14 +112,13 @@ def run_session(
         raise typer.Exit(code=1)
 
     if cfg.sampling.test_ratio is not None:
-        # explicit test_ratio: size caps training pool only, test_ratio is applied to the full test set
         if cfg.sampling.size is not None:
             n = min(cfg.sampling.size, len(train_full))
             train_full = train_full.sample(n=n, random_state=cfg.sampling.random_state).reset_index(drop=True)
-        n = max(1, round(len(test_df) * cfg.sampling.test_ratio))
+        # apply test_ratio against train_full size so both ratios use the same base
+        n = max(1, min(round(len(train_full) * cfg.sampling.test_ratio), len(test_df)))
         test_df = test_df.sample(n=n, random_state=cfg.sampling.random_state).reset_index(drop=True)
     elif cfg.sampling.size is not None:
-        # no explicit test_ratio: size distributes proportionally across train+val and test
         train_full, test_df = apply_size_limit(train_full, test_df, cfg.sampling.size, cfg.sampling.random_state)
 
     train_df, val_df = val_split(
@@ -216,14 +215,12 @@ def run_baseline(
         raise typer.Exit(code=1)
 
     if cfg.sampling.test_ratio is not None:
-        # explicit test_ratio: size caps training pool only, test_ratio is applied to the full test set
         if cfg.sampling.size is not None:
             n = min(cfg.sampling.size, len(train_full))
             train_full = train_full.sample(n=n, random_state=cfg.sampling.random_state).reset_index(drop=True)
-        n = max(1, round(len(test_df) * cfg.sampling.test_ratio))
+        n = max(1, min(round(len(train_full) * cfg.sampling.test_ratio), len(test_df)))
         test_df = test_df.sample(n=n, random_state=cfg.sampling.random_state).reset_index(drop=True)
     elif cfg.sampling.size is not None:
-        # no explicit test_ratio: size distributes proportionally across train+val and test
         train_full, test_df = apply_size_limit(train_full, test_df, cfg.sampling.size, cfg.sampling.random_state)
 
     train_df, val_df = val_split(
