@@ -1,5 +1,7 @@
 # edSmith
 
+Multi-agent generative feedback system for IELTS writing assessment. A council of LLM agents generates per-component feedback; a lightweight scorer (Qwen3 + LoRA) is fine-tuned on that feedback each iteration; a reflection agent updates the prompt policies based on validation performance.
+
 ## Quick start
 
 **1. Install**
@@ -52,8 +54,6 @@ import unsloth  # must be imported before transformers is loaded anywhere
 import threading
 from edsmith.mcp.server import mcp
 
-# Run in a thread so anyio can create its own event loop
-# (Colab's kernel already owns the main-thread event loop)
 t = threading.Thread(target=mcp.run, kwargs={"transport": "http", "port": 8000}, daemon=True)
 t.start()
 t.join()
@@ -69,11 +69,7 @@ Parses the original IELTS dataset into per-component scores and trains the Score
 edsmith run-baseline --config session.yaml --mcp-url https://<id>.trycloudflare.com/mcp
 ```
 
-The IELTS dataset downloads automatically from Hugging Face on first run.
-
 **6. Run a session**
-
-Back in your local terminal:
 
 ```bash
 edsmith run-session --config session.yaml --mcp-url https://<id>.trycloudflare.com/mcp
@@ -83,38 +79,103 @@ The IELTS dataset downloads automatically from Hugging Face on first run.
 
 ---
 
-## Config reference
+## Architecture
 
-`session.yaml` key fields:
+Each session runs a loop on your **local machine**, calling out to the **Colab GPU server** only for training and evaluation:
 
-```yaml
-n_iterations: 5
-phase1_concurrency: 1   # max concurrent essays; set to 1 for free-tier models (16 req/min limit)
-
-models:
-  generator: qwen/qwen3.5-9b   # feedback generation
-  critic: qwen/qwen3.5-9b      # council mode only
-  chair: anthropic/claude-sonnet-4-5         # council mode + reflection
-
-council:
-  enabled: false        # true = Generator→Critic→Chair pipeline
-  critic_rounds: 1
-  chair_memory_injection: false
-
-sampling:
-  size: null            # null = full dataset; e.g. 100 for a quick test
-
-prompt_policies:        # one entry per component; reflection updates these each iteration
-  task_response:
-    specificity: 2      # 1 (brief) to 5 (comprehensive)
-    evidence_required: true
-    feedback_granularity: component
-    additional_instructions: ""
-  # coherence, lexical, grammar follow the same structure
+```
+Local                               Colab (GPU via MCP)
+─────────────────────────────────   ───────────────────
+Phase 1: generate feedback  ──────────────────────────→ (LLM API calls, no GPU)
+Train scorer                ──────────────────────────→ train_scorer tool
+Evaluate (val + test)       ──────────────────────────→ evaluate_scorer tool
+Reflect: update policies    ──────────────────────────→ (LLM API call, no GPU)
+↑___________________________________|
+         repeat N iterations
 ```
 
 ---
 
+## Config reference
+
+All options live in `session.yaml`. The key sections:
+
+### `sampling`
+
+Controls how much data is used. All three ratios use `train_full` (after the `size` cap) as their base, so setting the same value for `validation_ratio` and `test_ratio` produces equally-sized splits.
+
+```yaml
+sampling:
+  size: 500             # cap on the training pool; null = full dataset
+                        # if size exceeds the actual dataset it has no effect
+  validation_ratio: 0.15   # fraction of the training pool held out for validation
+  test_ratio: 0.15         # fraction of the training pool used for test (drawn from the HF test split)
+                            # null = use all available test data
+  random_state: 42
+```
+
+With `size: 500` and both ratios at `0.15`:
+- `train_df` ≈ 425 rows → Phase 1 generates feedback, scorer trains on this
+- `val_df` ≈ 75 rows → evaluated each iteration
+- `test_df` ≈ 75 rows → evaluated each iteration
+
+The CLI prints `Dataset train=... val=... test=...` before any training starts so you can confirm.
+
+### `scorer`
+
+```yaml
+scorer:
+  model_name: unsloth/Qwen3-1.7B
+  component: task_response   # focus training and evaluation on one component
+                              # options: task_response | coherence | lexical | grammar
+                              # null = all four components (averages predictions for band score)
+  max_steps: 40
+  lora_r: 16
+  lora_alpha: 16
+  learning_rate: 0.0002
+  per_device_train_batch_size: 2
+  gradient_accumulation_steps: 4
+  max_seq_length: 4096
+  load_in_4bit: true
+```
+
+When `component` is set, training filters to only that component's feedback rows (roughly ¼ of the data) and evaluation generates predictions for that component only. Run separate sessions per component to train all four.
+
+### `models`
+
+```yaml
+models:
+  generator: qwen/qwen3.5-9b   # feedback generation
+  critic: qwen/qwen3.5-9b      # council mode only
+  chair: anthropic/claude-sonnet-4-5   # council mode + reflection
+```
+
+### `council`
+
+```yaml
+council:
+  enabled: false        # true = Generator → Critic → Chair pipeline
+  critic_rounds: 1
+  chair_memory_injection: false
+```
+
+### `prompt_policies`
+
+One entry per IELTS component. The reflection agent updates these each iteration.
+
+```yaml
+prompt_policies:
+  task_response:
+    specificity: 2        # 1 (brief) to 5 (comprehensive)
+    evidence_required: true
+    feedback_granularity: component
+    additional_instructions: ""
+  coherence:   { ... }
+  lexical:     { ... }
+  grammar:     { ... }
+```
+
+---
 
 ## Other commands
 
@@ -124,4 +185,7 @@ pytest
 
 # Inspect the session history tree
 edsmith show-tree
+
+# Write a fresh default config
+edsmith init-config session.yaml
 ```

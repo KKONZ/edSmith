@@ -60,6 +60,7 @@ class ScorerConfig(BaseModel):
     learning_rate: float = 2e-4
     per_device_train_batch_size: int = 2
     gradient_accumulation_steps: int = 4
+    component: Literal["task_response", "coherence", "lexical", "grammar"] | None = None
 
 
 class MemoryConfig(BaseModel):

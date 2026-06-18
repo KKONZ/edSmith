@@ -259,9 +259,9 @@ def run_baseline(
 
     typer.echo("Evaluating …")
     try:
-        y_true_val, y_pred_val = evaluator_fn(model_path, val_df)
+        y_true_val, y_pred_val = evaluator_fn(model_path, val_df, cfg.scorer.component)
         val_metrics = compute_all(y_true_val, y_pred_val)
-        y_true_test, y_pred_test = evaluator_fn(model_path, test_df)
+        y_true_test, y_pred_test = evaluator_fn(model_path, test_df, cfg.scorer.component)
         test_metrics = compute_all(y_true_test, y_pred_test)
     except Exception as exc:
         typer.echo(f"Evaluation failed: {exc}", err=True)
@@ -374,7 +374,7 @@ def _load_evaluator() -> Callable:
         from edsmith.training.scorer import evaluate_scorer
         return evaluate_scorer
     except ImportError:
-        def _stub(model_path, df):
+        def _stub(model_path, df, component=None):
             raise RuntimeError(
                 "edsmith.training.scorer is not available. "
                 "Scorer evaluation requires a GPU environment with Unsloth installed."

@@ -105,6 +105,7 @@ async def train_scorer(
 async def evaluate_scorer(
     model_path: str,
     eval_data: str,
+    component: str | None = None,
 ) -> str:
     """Run the trained Scorer on an evaluation set and return predictions.
 
@@ -123,7 +124,7 @@ async def evaluate_scorer(
         tmp_path = f.name
     try:
         loop = asyncio.get_event_loop()
-        y_true, y_pred = await loop.run_in_executor(None, _evaluate, model_path, tmp_path)
+        y_true, y_pred = await loop.run_in_executor(None, _evaluate, model_path, tmp_path, component)
         return json.dumps({"y_true": y_true, "y_pred": y_pred})
     finally:
         os.unlink(tmp_path)
@@ -163,6 +164,9 @@ def _train(feedback_path: str, cfg: dict, output_dir: str) -> str:
     _log("Loading feedback data …")
     df = pd.read_parquet(feedback_path)
     df = df.dropna(subset=["score"])
+    if cfg.get("component"):
+        df = df[df["component"] == cfg["component"]]
+        _log(f"Filtered to component '{cfg['component']}'")
     df["label"] = df["score"].map(_BAND_TO_IDX)
     df = df.dropna(subset=["label"])
     df["label"] = df["label"].astype(int)
@@ -229,7 +233,7 @@ def _train(feedback_path: str, cfg: dict, output_dir: str) -> str:
 _EVAL_BATCH_SIZE = 8
 
 
-def _evaluate(model_path: str, eval_data_path: str) -> tuple[list[float], list[float]]:
+def _evaluate(model_path: str, eval_data_path: str, component: str | None = None) -> tuple[list[float], list[float]]:
     from unsloth import FastLanguageModel  # must be first
     import numpy as np
     import pandas as pd
@@ -247,7 +251,9 @@ def _evaluate(model_path: str, eval_data_path: str) -> tuple[list[float], list[f
     model.generation_config.max_new_tokens = 8
     tokenizer.padding_side = "left"
 
-    n_components = len(COMPONENT_HEADINGS)
+    target_components = [component] if component else list(COMPONENT_HEADINGS.keys())
+    n_components = len(target_components)
+    _log(f"Evaluating component(s): {target_components}")
 
     # Build all prompts upfront and filter rows with unparseable bands
     valid_bands: list[float] = []
@@ -258,8 +264,8 @@ def _evaluate(model_path: str, eval_data_path: str) -> tuple[list[float], list[f
         except ValueError:
             continue
         valid_bands.append(band)
-        for component in COMPONENT_HEADINGS:
-            messages = [{"role": "user", "content": _format_input(row["question"], row["essay"], component)}]
+        for comp in target_components:
+            messages = [{"role": "user", "content": _format_input(row["question"], row["essay"], comp)}]
             all_prompts.append(tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True))
 
     # Batched inference
