@@ -81,8 +81,7 @@ def apply_size_limit(
     size: int,
     random_state: int = 42,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Proportionally subsample train_full and test_df so their combined row
-    count is approximately *size*, preserving the original train/test ratio."""
+    """Proportionally cap train_full and test_df so their combined count ≈ size."""
     total = len(train_full) + len(test_df)
     ratio = size / total
     train_n = max(1, round(len(train_full) * ratio))

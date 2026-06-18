@@ -241,11 +241,10 @@ def _evaluate(model_path: str, eval_data_path: str) -> tuple[list[float], list[f
 
     model, tokenizer = FastLanguageModel.from_pretrained(
         model_name=model_path,
-        max_seq_length=4096,
         load_in_4bit=True,
     )
     FastLanguageModel.for_inference(model)
-    model.generation_config.max_length = None  # suppress max_new_tokens/max_length conflict
+    model.generation_config.max_new_tokens = 8
     tokenizer.padding_side = "left"
 
     n_components = len(COMPONENT_HEADINGS)
@@ -269,7 +268,7 @@ def _evaluate(model_path: str, eval_data_path: str) -> tuple[list[float], list[f
         for i in range(0, len(all_prompts), _EVAL_BATCH_SIZE):
             batch = all_prompts[i : i + _EVAL_BATCH_SIZE]
             enc = tokenizer(batch, return_tensors="pt", truncation=True, max_length=4096, padding=True).to(model.device)
-            out = model.generate(**enc, max_new_tokens=8, do_sample=False)
+            out = model.generate(**enc, do_sample=False)
             input_len = enc["input_ids"].shape[1]
             for o in out:
                 all_generated.append(tokenizer.decode(o[input_len:], skip_special_tokens=True).strip())
