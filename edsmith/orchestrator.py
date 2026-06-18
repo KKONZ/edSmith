@@ -148,7 +148,12 @@ class Orchestrator:
         return graph.compile(checkpointer=MemorySaver())
 
     def _route(self, state: SessionState) -> str:
-        return END if state["iteration"] >= self._config.n_iterations else "phase1"
+        iteration = state["iteration"]
+        if iteration >= self._config.n_iterations:
+            print(f"\n[Session] All {self._config.n_iterations} iterations complete → ending.")
+            return END
+        print(f"\n[Session] Iteration {iteration} done, {self._config.n_iterations - iteration} remaining → continuing.")
+        return "phase1"
 
     # ------------------------------------------------------------------
     # Nodes

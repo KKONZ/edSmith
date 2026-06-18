@@ -55,6 +55,7 @@ def run_session(
     drive_path = drive or Path(cfg.memory.drive_path)
 
     typer.echo(f"Session config loaded  (n_iterations={cfg.n_iterations}, council={cfg.council.enabled})")
+    typer.echo(f"Local output path: {drive_path.resolve()}")
 
     # ---- Provider --------------------------------------------------
     try:
@@ -199,6 +200,7 @@ def run_baseline(
     cfg = SessionConfig.from_yaml(config_path)
     drive_path = drive or Path(cfg.memory.drive_path)
 
+    typer.echo(f"Local output path: {drive_path.resolve()}")
     episodic_mem = EpisodicMemory(drive_path=drive_path)
     existing = [r for r in episodic_mem.load_all() if r.architecture == "baseline"]
     if existing:
