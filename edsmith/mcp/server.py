@@ -163,9 +163,10 @@ def _train(feedback_path: str, cfg: dict, output_dir: str) -> str:
     _log("Loading feedback data …")
     df = pd.read_parquet(feedback_path)
     df = df.dropna(subset=["score"])
+    _log(f"component setting: {cfg.get('component')!r}  (df has {df['component'].unique().tolist() if 'component' in df.columns else 'no component col'})")
     if cfg.get("component"):
         df = df[df["component"] == cfg["component"]]
-        _log(f"Filtered to component '{cfg['component']}'")
+        _log(f"Filtered to component '{cfg['component']}': {len(df)} rows")
     df["label"] = df["score"].map(_BAND_TO_IDX)
     df = df.dropna(subset=["label"])
     df["label"] = df["label"].astype(int)
@@ -253,7 +254,7 @@ def _evaluate(model_path: str, eval_data_path: str) -> tuple[list[float], list[f
         load_in_4bit=True,
     )
     FastLanguageModel.for_inference(model)
-    model.generation_config.max_new_tokens = 8
+    #model.generation_config.max_new_tokens = 8
     tokenizer.padding_side = "left"
 
     target_components = [component] if component else list(COMPONENT_HEADINGS.keys())
@@ -285,21 +286,26 @@ def _evaluate(model_path: str, eval_data_path: str) -> tuple[list[float], list[f
                 all_generated.append(tokenizer.decode(o[input_len:], skip_special_tokens=True).strip())
             _log(f"  eval batch {i // _EVAL_BATCH_SIZE + 1}/{-(-len(all_prompts) // _EVAL_BATCH_SIZE)}")
 
-    # Aggregate component predictions per row
+    # Aggregate component predictions per row — skip unparseable outputs
     y_true: list[float] = []
     y_pred: list[float] = []
+    n_skipped = 0
     for i, band in enumerate(valid_bands):
         component_preds: list[float] = []
         for j in range(n_components):
+            raw = all_generated[i * n_components + j]
             try:
-                pred = max(1.0, min(9.0, round(float(all_generated[i * n_components + j]) * 2) / 2))
-            except ValueError:
-                pred = 5.0
-            component_preds.append(pred)
+                pred = max(1.0, min(9.0, round(float(raw) * 2) / 2))
+                component_preds.append(pred)
+            except (ValueError, TypeError):
+                _log(f"  unparseable: row {i} comp {j} → {raw!r}")
+        if not component_preds:
+            n_skipped += 1
+            continue
         y_true.append(band)
         y_pred.append(round(float(np.mean(component_preds)) * 2) / 2)
 
-    _log(f"Evaluation complete. {len(y_true)} predictions.")
+    _log(f"Evaluation complete. {len(y_true)} predictions  ({n_skipped} rows skipped — no parseable output).")
     return y_true, y_pred
 
 
