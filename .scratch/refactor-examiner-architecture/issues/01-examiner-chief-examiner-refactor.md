@@ -112,7 +112,7 @@ src/edsmith/
 
 - ✅ **Commit 14:** Add `src/edsmith/examiner/mcp/tools.py`. `register_examiner_pass(app)` — `run_examiner_pass(session_id, iteration, concurrency=4)` reads `SessionState`, lazy-initialises session data parquets on first call (train/val/test splits saved to `{drive_path}/sessions/{session_id}/data/`), runs `generate_feedback` concurrently with a semaphore, writes `feedback_iter{n}.parquet`, returns `ExaminerSummary`. Drive path from `EDSMITH_DRIVE_PATH` env var (default Colab path). Registered in `src/edsmith/mcp/__main__.py`.
 
-**Commit 15:** Add `tests/examiner/test_feedback.py`. Test via `StubProvider`: output has correct four components; `StrategyGuidance` is accepted; parsing helpers handle edge cases. Test `run_examiner_pass` tool function directly (not via HTTP) with a temporary session directory.
+- ✅ **Commit 15:** Add `tests/examiner/test_feedback.py` (28 tests, all passing). `TestExtractScore` (8), `TestExtractTag` (6), `TestGenerateFeedback` (8 via StubProvider — all components, score/tag parsing, StrategyGuidance, missing score), `TestRunExaminerPass` (6 — parquet written, summary shape, essay/component counts, schema). Tool tested directly via `monkeypatch` on `OpenRouterProvider` and `EDSMITH_DRIVE_PATH`.
 
 ### Group F — Chief Examiner domain
 
