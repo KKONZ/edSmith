@@ -1,92 +1,47 @@
-# Colab GPU Server Setup
+# Colab GPU Setup
 
-The edSmith Scorer training and evaluation runs on a Colab GPU. This guide covers setting up the server and connecting it to your local machine. You need to repeat steps 3–6 each time you reconnect after a disconnect.
+Scorer training and evaluation runs on a Colab GPU. Claude Code connects to the Colab session via `colab-mcp` — no tunnel required.
 
 ## Prerequisites
 
 - Google account with Colab access
 - Google Drive with `MyDrive/edsmith/` directory (created automatically on first session)
-- The edSmith repo cloned locally with `pip install -e ".[dev]"` already run
+- `uv` installed locally (`pip install uv` or https://docs.astral.sh/uv/getting-started/installation/)
+- `colab-mcp` connected as an MCP server: `uvx git+https://github.com/googlecolab/colab-mcp`
 
-## Step 1 — Open the Notebook and Set Runtime
+## Step 1 — Open the Notebook
 
-1. Open the edSmith Colab notebook in your browser
-2. Go to **Runtime → Change runtime type**
-3. Select **GPU** (T4 is sufficient; A100 is faster but not required)
-4. Click **Save**
+Open `notebooks/edsmith_training.ipynb` in Colab:
 
-> Colab disconnects idle GPU runtimes after ~90 minutes. If you step away, expect to reconnect.
+1. Go to [colab.research.google.com](https://colab.research.google.com)
+2. File → Open notebook → GitHub → paste the repo URL
+3. Select `notebooks/edsmith_training.ipynb`
 
-## Step 2 — Mount Google Drive
+## Step 2 — Set Runtime to GPU
 
-Run this cell:
+Runtime → Change runtime type → GPU (T4 is sufficient)
 
-```python
-from google.colab import drive
-drive.mount('/content/drive')
-```
+> Colab disconnects idle GPU runtimes after ~90 minutes. Session state on Drive is preserved; re-run the setup cell and continue.
 
-Verify you can see `/content/drive/MyDrive/edsmith/` before continuing. All session state (parquets, `state.json`, proposals, model checkpoints) lives here.
+## Step 3 — Run the Setup Cell
 
-## Step 3 — Install Training Dependencies
+Run **Cell 1** once per session. It mounts Drive, installs `edsmith[training]`, and sets `EDSMITH_DRIVE_PATH`.
 
-```bash
-pip install -e ".[training]" --quiet
-```
+## Step 4 — Let Claude Code Drive
 
-This installs `unsloth`, `transformers`, and `coral-pytorch`. These are GPU-only — do not run this locally.
-
-## Step 4 — Start the MCP Server
-
-```python
-from edsmith.training.mcp.server import mcp
-mcp.run(transport="streamable-http", port=8000)
-```
-
-The server exposes two tools: `train_scorer` and `evaluate_scorer`. Use `streamable-http` transport — `sse` has known compatibility issues with Cloudflare tunnels.
-
-## Step 5 — Start the Cloudflare Tunnel
-
-In a new cell:
-
-```bash
-!wget -q https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -O cloudflared
-!chmod +x cloudflared
-!./cloudflared tunnel --url http://localhost:8000 &
-```
-
-Wait for output like:
-
-```
-Your quick Tunnel has been created! Visit it at:
-https://something-random.trycloudflare.com
-```
-
-Copy this URL. **It changes every time you start a new tunnel.**
-
-## Step 6 — Connect from Your Local Machine
-
-Pass the tunnel URL to any edSmith CLI command:
-
-```bash
-edsmith run-session --config session.yaml --mcp-url https://something-random.trycloudflare.com
-```
+With the notebook open in your browser, Claude Code uses `colab-mcp` to execute the train and evaluate cells. You do not need to run Cells 2 or 3 manually — Claude Code will set the session variables and call `run_cell`.
 
 ## Reconnecting After a Disconnect
 
-Drive state is preserved across disconnects. When you reconnect:
-
-1. Re-run steps 3–5 to get a fresh tunnel URL
-2. Do **not** start a new session — find your existing `session_id` in `state.json`
-3. Use Claude Code with the `resume-session` skill to determine where to pick up
+1. Reopen the notebook in Colab and re-run the setup cell (Cell 1)
+2. Tell Claude Code you are reconnected — it will resume from the last completed step
 
 ## Troubleshooting
 
 | Symptom | Likely cause | Fix |
 |---|---|---|
-| Tunnel URL not printed | cloudflared failed to start | Check for port 8000 conflicts; re-run |
-| Connection times out | Server still starting | Wait 30s and retry |
-| `train_scorer` errors immediately | `[training]` extras not installed | Check install cell output |
-| Drive files appear stale | Cached mount | Run `drive.flush_and_unmount()` then remount |
+| `run_cell` fails immediately | Setup cell not run | Run Cell 1 first |
+| `[training]` import error | Install failed | Check Cell 1 output for pip errors |
+| Drive files appear stale | Cached mount | `drive.flush_and_unmount()` then remount |
 | GPU memory error during training | Batch size too large | Reduce `per_device_train_batch_size` to 1 in `ScorerConfig` |
-| Colab runtime restarted unexpectedly | Idle timeout or preemption | Re-run steps 3–5; session state is safe on Drive |
+| Runtime restarted unexpectedly | Idle timeout or preemption | Re-run Cell 1; session state is safe on Drive |
