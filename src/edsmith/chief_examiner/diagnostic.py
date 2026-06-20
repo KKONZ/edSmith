@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import json
-import math
 import re
+from pathlib import Path
 from typing import Any
 
 import pandas as pd
@@ -16,67 +16,77 @@ from edsmith.config.session import (
     StrategyGuidance,
 )
 from edsmith.data.parser import COMPONENT_HEADINGS
-from edsmith.memory.episodic import EpisodicMemory, EpisodicRecord
 from edsmith.providers.base import LLMProvider, Message
+from edsmith.session.state import load_metrics, load_proposal
 
-_UCB1_C = math.sqrt(2)
 _AUDIT_SAMPLE_SIZE = 10
 
 
 # ---------------------------------------------------------------------------
-# UCB1
+# Iteration history
 # ---------------------------------------------------------------------------
 
-def _ucb1(record: EpisodicRecord, total_visits: int) -> float:
-    if record.visit_count == 0:
-        return float("inf")
-    return record.value_estimate + _UCB1_C * math.sqrt(
-        math.log(total_visits) / record.visit_count
-    )
+def _load_iteration_history(
+    drive_path: Path,
+    session_id: str,
+    current_iteration: int,
+) -> str:
+    """Build a narrative of prior iterations from proposals and metrics files."""
+    if current_iteration == 0:
+        return "No prior iterations — this is the first diagnostic."
 
+    lines: list[str] = []
 
-# ---------------------------------------------------------------------------
-# Mode selection
-# ---------------------------------------------------------------------------
+    for i in range(current_iteration):
+        parts: list[str] = [f"**Iteration {i}**"]
 
-def _select_mode(session_id: str, memory: EpisodicMemory) -> tuple[str, str]:
-    """Return (mode, context_text) for the diagnostic prompt."""
-    all_records = memory.load_all()
-    total_nodes = len(all_records)
-    siblings = memory.get_siblings(session_id)
+        try:
+            m = load_metrics(drive_path, session_id, i)
+            parts.append(
+                f"val accuracy={m.val.get('accuracy', '?'):.3f} "
+                f"qwk={m.val.get('qwk', '?'):.3f} "
+                f"smd={m.val.get('smd', '?'):+.3f} "
+                f"adj_acc={m.val.get('adjacent_accuracy', '?'):.3f}"
+            )
+        except FileNotFoundError:
+            parts.append("metrics not available")
 
-    if total_nodes >= 5:
-        mode = "mcts"
-    elif len(siblings) >= 2:
-        mode = "beam"
-    else:
-        mode = "simple"
+        try:
+            proposal = load_proposal(drive_path, session_id, i)
+            report = proposal.diagnostic_report
 
-    lines = [f"Reflection mode: {mode} ({total_nodes} sessions in tree, {len(siblings)} siblings)."]
+            if report.summary:
+                parts.append(f"diagnosis: {report.summary[:300]}")
 
-    if mode in ("beam", "mcts") and siblings:
-        lines.append("Sibling session performance:")
-        for sib in siblings[:3]:
-            m = sib.final_metrics
-            if m:
-                lines.append(
-                    f"  {sib.session_id}: accuracy={m.accuracy:.3f}, "
-                    f"qwk={m.qwk:.3f}, smd={m.smd:+.3f}"
-                )
+            changes: list[str] = []
+            sg = proposal.proposed_strategy
+            for flag in ("use_aoa", "use_grammar", "use_complexity", "use_discourse",
+                         "contrastive_anchoring"):
+                if getattr(sg, flag):
+                    changes.append(f"{flag}=True")
+            for comp, focus in sg.per_component_focus.items():
+                changes.append(f"{comp}_focus='{focus[:60]}'")
+            for comp, pol in proposal.proposed_policies.items():
+                changes.append(f"{comp}.specificity={pol.specificity}")
+                if pol.additional_instructions:
+                    changes.append(f"{comp}.instructions='{pol.additional_instructions[:60]}'")
+            if changes:
+                parts.append(f"proposed: {', '.join(changes)}")
 
-    if mode == "mcts":
-        total_visits = sum(r.visit_count for r in all_records)
-        if total_visits > 0:
-            candidates = [r for r in all_records if r.session_id != session_id]
-            if candidates:
-                best = max(candidates, key=lambda r: _ucb1(r, total_visits))
-                lines.append(
-                    f"MCTS: highest UCB1 node is {best.session_id} "
-                    f"(score={_ucb1(best, total_visits):.3f}, "
-                    f"value={best.value_estimate:.3f}, visits={best.visit_count})"
-                )
+            if proposal.status == "approved":
+                parts.append("human: approved")
+            elif proposal.status == "rejected":
+                critique = proposal.critique or "(no critique)"
+                parts.append(f"human: rejected — {critique[:200]}")
+            else:
+                parts.append("human: pending")
 
-    return mode, "\n".join(lines)
+        except FileNotFoundError:
+            pass
+
+        lines.append(" | ".join(parts))
+
+    return "## Iteration History\n\n" + "\n\n".join(lines)
 
 
 # ---------------------------------------------------------------------------
@@ -93,8 +103,8 @@ def _linguistic_audit_sync(
         try:
             from edsmith.tools.grammar import grammar_check
             results = [grammar_check(e) for e in essays]
-            aoa_vals = [r["stats"].get("mean_aoa_of_errors") for r in results
-                        if r["stats"].get("mean_aoa_of_errors") is not None]
+            aoa_vals = [r["stats"]["mean_aoa_of_errors"] for r in results
+                        if "mean_aoa_of_errors" in r["stats"]]
             findings["grammar"] = {
                 "mean_errors_per_essay": sum(r["count"] for r in results) / len(results),
                 "mean_aoa_of_errors": sum(aoa_vals) / len(aoa_vals) if aoa_vals else None,
@@ -150,10 +160,9 @@ def _linguistic_audit_sync(
 # ---------------------------------------------------------------------------
 
 def _feedback_sample(feedback_df: pd.DataFrame, n: int = 6) -> str:
-    """Return a readable sample of feedback text for the diagnostic prompt."""
-    lines = []
+    lines: list[str] = []
     for component in COMPONENT_HEADINGS:
-        subset = feedback_df[feedback_df["component"] == component].head(n // 4 or 1)
+        subset = feedback_df[feedback_df["component"] == component].head(max(1, n // 4))
         for _, row in subset.iterrows():
             score = row.get("score", "?")
             text = str(row.get("feedback_text", ""))[:300]
@@ -170,19 +179,22 @@ def _build_messages(
     strategy: StrategyGuidance,
     linguistic_findings: dict[str, Any],
     feedback_sample: str,
-    mode_context: str,
+    iteration_history: str,
     critique: str | None,
 ) -> list[Message]:
     system = (
         "You are the Chief Examiner for an IELTS automated scoring system. "
         "Your role is to diagnose feedback quality issues in the training data and "
         "propose targeted changes to PromptPolicy and StrategyGuidance for the next iteration.\n\n"
+        "Use the iteration history to avoid repeating changes that did not help and to "
+        "build on changes that did. If a human has rejected a prior proposal with a critique, "
+        "that critique must directly shape your new proposal.\n\n"
         "Test set purity rule: you may inspect individual validation records but NEVER "
         "individual test records. Only aggregated test statistics are provided.\n\n"
         "Respond with a single JSON object inside <diagnostic>...</diagnostic> tags.\n"
         "Schema:\n"
         "{\n"
-        '  "summary": "...",\n'
+        '  "summary": "concise diagnosis of the main issue this iteration",\n'
         '  "per_component_issues": {"task_response": "...", "coherence": "...", "lexical": "...", "grammar": "..."},\n'
         '  "proposed_strategy": {"use_aoa": bool, "use_grammar": bool, "use_complexity": bool,\n'
         '                        "use_discourse": bool, "contrastive_anchoring": bool,\n'
@@ -193,21 +205,19 @@ def _build_messages(
         '                  "additional_instructions": "..."}\n'
         '  }\n'
         "}\n"
-        "Only include components in proposed_policies where you recommend changes."
+        "Only include components in proposed_policies where you recommend changes. "
+        "Focus on the highest-leverage fix — do not change more than 2–3 things at once."
     )
 
     parts = [
         f"## Session {session_id} — Iteration {iteration}",
-        f"\n### {mode_context}",
-        "\n### Validation Metrics",
+        f"\n{iteration_history}",
+        "\n### Current Validation Metrics",
         json.dumps(val_metrics, indent=2),
-        "\n### Test Metrics (summary only — no individual records)",
+        "\n### Test Metrics (aggregated summary only — no individual records)",
         json.dumps(test_metrics_summary, indent=2),
         "\n### Current Policies",
-        json.dumps(
-            {k: v.model_dump() for k, v in policies.items()},
-            indent=2,
-        ),
+        json.dumps({k: v.model_dump() for k, v in policies.items()}, indent=2),
         "\n### Current Strategy",
         strategy.model_dump_json(indent=2),
     ]
@@ -222,11 +232,6 @@ def _build_messages(
 
     if critique:
         parts.append(f"\n### Human Critique of Previous Proposal\n{critique}")
-
-    parts.append(
-        "\nDiagnose the feedback quality and propose changes. "
-        "Focus on the highest-leverage fix — do not change more than 2–3 things at once."
-    )
 
     return [
         Message(role="system", content=system),
@@ -248,7 +253,6 @@ def _parse_response(
     metric_summary: dict[str, float],
 ) -> tuple[DiagnosticReport, HumanReviewProposal]:
     raw: dict[str, Any] = {}
-
     m = re.search(r"<diagnostic>(.*?)</diagnostic>", text, re.DOTALL | re.IGNORECASE)
     if m:
         try:
@@ -265,7 +269,6 @@ def _parse_response(
         linguistic_findings=linguistic_findings,
     )
 
-    # Merge proposed strategy — start from current and overlay changes
     strategy_data = strategy.model_dump()
     strategy_data.update(raw.get("proposed_strategy", {}))
     try:
@@ -273,7 +276,6 @@ def _parse_response(
     except Exception:
         proposed_strategy = strategy
 
-    # Merge proposed policies — start from current and overlay per-component changes
     proposed_policies: dict[str, PromptPolicy] = dict(policies)
     for component, patch in raw.get("proposed_policies", {}).items():
         if component in COMPONENT_HEADINGS:
@@ -309,29 +311,32 @@ async def run_diagnostic(
     strategy: StrategyGuidance,
     provider: LLMProvider,
     model_config: ModelConfig,
-    episodic_memory: EpisodicMemory,
+    drive_path: Path,
     critique: str | None = None,
 ) -> tuple[DiagnosticReport, HumanReviewProposal]:
     """Diagnose feedback quality and produce a HumanReviewProposal.
 
+    Loads iteration history from prior proposals and metrics files so the
+    Chief Examiner can reason about what has been tried and what the human
+    has approved or rejected.
+
     Individual test records are never passed here — only aggregated
     test_metrics_summary, consistent with ADR 0006.
     """
-    mode, mode_context = _select_mode(session_id, episodic_memory)
+    iteration_history = _load_iteration_history(drive_path, session_id, iteration)
 
-    # Linguistic audit on a sample of essays (synchronous tools → thread)
     sample_essays = (
-        feedback_df["essay"]
-        .drop_duplicates()
-        .head(_AUDIT_SAMPLE_SIZE)
-        .tolist()
+        feedback_df["essay"].drop_duplicates().head(_AUDIT_SAMPLE_SIZE).tolist()
     )
     linguistic_findings = await asyncio.to_thread(
         _linguistic_audit_sync, sample_essays, strategy
     )
 
     fb_sample = _feedback_sample(feedback_df)
-    metric_summary = {**val_metrics, **{f"test_{k}": v for k, v in test_metrics_summary.items()}}
+    metric_summary = {
+        **val_metrics,
+        **{f"test_{k}": v for k, v in test_metrics_summary.items()},
+    }
 
     messages = _build_messages(
         session_id=session_id,
@@ -342,7 +347,7 @@ async def run_diagnostic(
         strategy=strategy,
         linguistic_findings=linguistic_findings,
         feedback_sample=fb_sample,
-        mode_context=mode_context,
+        iteration_history=iteration_history,
         critique=critique,
     )
 
