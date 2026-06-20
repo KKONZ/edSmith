@@ -162,7 +162,7 @@ src/edsmith/
 
 - ✅ **Commit 25:** Update `docs/adr/0008-structured-prompt-policy-as-search-interface.md` — `StrategyGuidance` extends `PromptPolicy`; both persisted in `SessionState` on disk.
 
-**Commit 26:** Update `CLAUDE.md` — full architecture section rewrite to reflect new `src/` layout, domain subpackages, MCP tool structure, agent markdown files, and session loop.
+- ✅ **Commit 26:** Update `CLAUDE.md` — full architecture section rewrite to reflect new `src/` layout, domain subpackages, MCP tool structure, agent markdown files, and session loop.
 
 ## Decision Document
 

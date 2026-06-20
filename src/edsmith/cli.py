@@ -66,3 +66,54 @@ def start_server(
     mcp.run(transport="http", host=host, port=port)
 
 
+# ------------------------------------------------------------------
+# show-sessions
+# ------------------------------------------------------------------
+
+@app.command("show-sessions")
+def show_sessions(
+    drive: Optional[Path] = typer.Option(
+        None, "--drive",
+        help="Override EDSMITH_DRIVE_PATH (default: /content/drive/MyDrive/edsmith)",
+    ),
+) -> None:
+    """List all sessions, their iteration counter, and any pending proposals."""
+    import json
+    import os
+
+    drive_path = Path(
+        drive or os.environ.get("EDSMITH_DRIVE_PATH", "/content/drive/MyDrive/edsmith")
+    )
+    sessions_dir = drive_path / "sessions"
+
+    if not sessions_dir.exists():
+        typer.echo(f"No sessions directory at {sessions_dir}")
+        raise typer.Exit()
+
+    rows = sorted(sessions_dir.glob("*/state.json"))
+    if not rows:
+        typer.echo(f"No sessions found under {sessions_dir}")
+        raise typer.Exit()
+
+    for state_file in rows:
+        try:
+            state = json.loads(state_file.read_text())
+            session_id = state.get("session_id", "?")
+            iteration = state.get("iteration", 0)
+            parent = state.get("parent_session_id") or "root"
+
+            proposal_note = ""
+            if iteration > 0:
+                prop_path = state_file.parent / "proposals" / f"iter{iteration - 1}.json"
+                if prop_path.exists():
+                    try:
+                        status = json.loads(prop_path.read_text()).get("status", "")
+                        if status == "pending":
+                            proposal_note = "  ⚠ proposal pending"
+                    except Exception:
+                        pass
+
+            typer.echo(f"  {session_id}  iteration={iteration}  parent={parent}{proposal_note}")
+        except Exception as exc:
+            typer.echo(f"  {state_file.parent.name}  (error: {exc})")
+

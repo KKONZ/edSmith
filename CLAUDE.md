@@ -9,83 +9,98 @@ Use terms from `CONTEXT.md` exactly. Key ones: **Question** (not prompt/task), *
 ## Commands
 
 ```bash
-pip install -e ".[dev]"          # install with dev extras (pytest)
-pytest                            # run all tests (no API key needed)
-pytest tests/test_metrics.py      # run a single test file
-edsmith init-config session.yaml  # write a fresh default config
-edsmith run-baseline --config session.yaml --mcp-url <url>
-edsmith run-session  --config session.yaml --mcp-url <url>
-edsmith show-tree                 # inspect episodic memory session tree
+pip install -e ".[dev]"           # install with dev extras (pytest)
+pytest                             # run all tests (no API key needed)
+pytest tests/examiner/             # run a domain test directory
+edsmith init-config session.yaml   # write a fresh default config
+edsmith start-server --port 8000   # start the edSmith MCP server
+edsmith show-sessions              # list active sessions and pending proposals
 ```
 
-`[training]` extras (`coral-pytorch`, `transformers`) are GPU-only — install only in the Colab environment, never locally.
+`[training]` extras (`unsloth`, `trl`, `transformers`) are GPU-only — install only in the Colab environment, never locally.
 
 ## Architecture
 
-The system is split across two environments:
+Two environments, one shared Drive path:
 
-**Local machine** — orchestration, Phase 1 feedback generation (LLM API calls via OpenRouter), reflection, episodic/semantic memory.
+**Local machine** — runs the edSmith MCP server (`python -m edsmith.mcp`), makes LLM API calls via OpenRouter, reads/writes session state. Claude Code is the session orchestrator, driving the loop via MCP tool calls.
 
-**Colab GPU server** — Scorer training and evaluation (Unsloth + Qwen3 + LoRA). Exposed as an MCP server via Cloudflare tunnel. The `--mcp-url` flag connects the local orchestrator to this server via `edsmith/mcp/client.py`. Without `--mcp-url`, the CLI falls back to importing `edsmith.training.scorer` locally (only works if training extras are installed).
+**Colab GPU** — Scorer training and evaluation (Unsloth + Qwen3 + LoRA). The notebook `notebooks/edsmith_training.ipynb` exposes train and evaluate cells. Claude Code drives these cells via `colab-mcp` (`run_cell`) — no tunnel or custom server required.
 
-### Session loop (`edsmith/orchestrator.py`)
+Both environments read and write to the same `EDSMITH_DRIVE_PATH` (Google Drive mounted in Colab, set as an env var locally).
 
-A LangGraph `StateGraph` drives each Session through N iterations:
+### Session loop
+
+Claude Code orchestrates each Session by calling edSmith MCP tools in sequence:
 
 ```
-phase1 → train → evaluate → reflect → (loop or END)
+init_session → run_examiner_pass → [Colab: train → evaluate] → run_chief_examiner → human review → approve_proposal → (next iteration)
 ```
 
-- **phase1** (`_node_phase1`): Calls `FeedbackAgent` or `CouncilAgent` concurrently (up to `phase1_concurrency`) to generate per-component Feedback for every training Essay. Writes a parquet file per iteration.
-- **train** (`_node_train`): Calls `trainer_fn(feedback_df, scorer_config, output_dir)` — runs in a thread executor so async loop doesn't block.
-- **evaluate** (`_node_evaluate`): Calls `evaluator_fn(model_path, df)` for validation and test sets; computes accuracy, adjacent_accuracy, QWK, SMD via `edsmith/metrics.py`.
-- **reflect** (`_node_reflect`): Calls `ReflectionAgent.areflect()` which suggests `PromptPolicy` updates for the next iteration. Saves `EpisodicRecord` to disk.
+All state is on disk. Every step is independently resumable. See `agents/edsmith.md` for the full step-by-step guide.
 
-DataFrames (train, val, test) are instance attributes on `Orchestrator`, never placed in LangGraph state.
+### Source layout (`src/edsmith/`)
 
-### Phase 1 agents (`edsmith/agents/phase1/`)
+Each domain is a subpackage with its own `mcp/tools.py` that registers FastMCP tools via the `register_*(app: FastMCP)` pattern. The top-level server at `src/edsmith/mcp/__main__.py` imports and registers all domain tools.
 
-- **`FeedbackAgent`** (`feedback.py`): Single-pass LLM call. Generator only.
-- **`CouncilAgent`** (`council.py`): Generator → Critic (N rounds) → Chair pipeline. The Chair can optionally receive semantically similar examples from `SemanticMemory` (`chair_memory_injection`). Enabled via `council.enabled` in config.
+| Subpackage | Responsibility | MCP tools |
+|---|---|---|
+| `examiner/` | Per-component Feedback generation | `run_examiner_pass` |
+| `chief_examiner/` | Diagnostic and reflection | `run_chief_examiner`, `approve_proposal`, `reject_proposal` |
+| `session/` | On-disk session state model and helpers | `init_session` |
+| `training/` | Qwen3 + LoRA training and evaluation (GPU-only) | invoked via `run_cell` in Colab notebook |
+| `tools/` | Linguistic feature implementations | `grammar_check`, `aoa_stats`, `complexity_stats`, `discourse_analysis` |
+| `data/` | IELTS dataset loading and parsing | — |
+| `memory/` | Episodic and semantic memory (ChromaDB) | — |
+| `config/` | Pydantic config models | — |
+| `metrics.py` | Evaluation metrics (deterministic) | — |
+| `a2a/` | A2A protocol agent cards and handler stubs | — |
 
-Both implement `agenerate_all(question, essay, policies)` returning `{component: ComponentFeedback}`.
+### Examiner (`src/edsmith/examiner/`)
 
-### Phase 2 reflection (`edsmith/agents/phase2/reflection.py`)
+`feedback.py` — `generate_feedback(question, essay, policies, strategy, provider, model_config)` runs all four IELTS components concurrently via `asyncio.gather`. Linguistic tool context (grammar, AoA, complexity, discourse) is collected once via `asyncio.to_thread` before the component calls launch. Returns `{component: ComponentFeedback}`.
 
-`ReflectionAgent` selects one of three modes based on episodic tree size:
-- **simple**: < 5 total nodes and < 2 siblings
-- **beam**: ≥ 2 sibling Sessions — compares branches
-- **mcts**: ≥ 5 total nodes — uses UCB1 scoring across all Sessions
+`mcp/tools.py` — `run_examiner_pass(session_id, iteration, concurrency)` reads `SessionState`, lazy-initialises session data parquets on first call, runs `generate_feedback` across all training Essays with a semaphore, writes `feedback_iter{N}.parquet`, returns `ExaminerSummary`.
 
-**Test set purity invariant**: only aggregated summary statistics (not individual records) are ever passed to the reflection agent. Individual record inspection is restricted to the validation split. This is intentional (see `docs/adr/0006-*`).
+### Chief Examiner (`src/edsmith/chief_examiner/`)
 
-### Memory (`edsmith/memory/`)
+`diagnostic.py` — `run_diagnostic(...)` loads all prior proposals and metrics as an iteration history string, runs a linguistic audit on sampled essays, passes a feedback sample (sorted by largest score-band divergence) to the LLM, and parses the `<diagnostic>` JSON response into a `DiagnosticReport` + `HumanReviewProposal`.
 
-- **`EpisodicMemory`**: Markdown files with YAML frontmatter under `{drive_path}/episodic/`. One file per Session. Tree structure encoded via `parent_session_id` and `tree_depth`. MCTS/UCB1 fields (`visit_count`, `value_estimate`) live here.
-- **`SemanticMemory`**: ChromaDB collections for retrieving similar essays during council mode.
+`mcp/tools.py` — three tools: `run_chief_examiner` (produces and saves the proposal), `approve_proposal` (applies proposed policies/strategy to `SessionState`, increments iteration), `reject_proposal` (stores critique, leaves state unchanged).
 
-### Config (`edsmith/config/session.py`)
+**Test set purity invariant**: only aggregated test metrics are ever passed to the Chief Examiner — never individual test records. See `docs/adr/0006-*`.
 
-All config is `SessionConfig` (Pydantic), loaded from `session.yaml`. Key sub-configs: `ModelConfig`, `PromptPolicy`, `CouncilConfig`, `SamplingConfig`, `ScorerConfig`, `MemoryConfig`. The reflection agent only modifies `PromptPolicy` fields.
+### Session state (`src/edsmith/session/`)
 
-### MCP server (`edsmith/mcp/server.py`)
+`state.py` — `SessionState` (Pydantic): `session_id`, `iteration`, `policies: dict[str, PromptPolicy]`, `strategy_guidance: StrategyGuidance`, `model_path`, `parent_session_id`. `SessionMetrics`: `val` and `test` metric dicts. `HumanReviewProposal`: diagnostic + proposed changes + status + critique.
 
-Runs in Colab. Exposes two tools: `train_scorer` (receives base64-encoded parquet, returns model path) and `evaluate_scorer` (returns y_true/y_pred lists). Uses `fastmcp` with streamable-http transport to avoid HTTP/2 issues with Cloudflare tunnels.
+All helpers use `{drive_path}/sessions/{session_id}/` as the root:
 
-### Data pipeline (`edsmith/data/`)
+| File | Written by |
+|---|---|
+| `state.json` | `init_session`, `approve_proposal` |
+| `data/{train,val,test}.parquet` | `run_examiner_pass` (first call) |
+| `feedback_iter{N}.parquet` | `run_examiner_pass` |
+| `metrics_iter{N}.json` | Colab Cell 3 |
+| `models/iter{N}/` | Colab Cell 2 |
+| `proposals/iter{N}.json` | `run_chief_examiner`, `approve_proposal`, `reject_proposal` |
 
-- `loader.py`: Downloads IELTS dataset from Hugging Face, parses raw evaluations via `parser.py`, splits into train/val/test.
-- `parser.py`: `parse_evaluation()` splits raw evaluation text into per-component sections and extracts Scores. `COMPONENT_HEADINGS` dict is the canonical mapping from component keys to display names.
+### Config (`src/edsmith/config/session.py`)
+
+Key models: `ModelConfig` (generator/critic/chair model IDs), `PromptPolicy` (specificity, evidence_required, feedback_granularity, additional_instructions), `StrategyGuidance` (use_grammar/aoa/complexity/discourse, contrastive_anchoring, per_component_focus), `SessionConfig` (top-level YAML config). `SessionConfig` is used for one-time setup (`init-config`) and `ScorerConfig`; runtime state lives in `SessionState`, not `SessionConfig`.
+
+### Data pipeline (`src/edsmith/data/`)
+
+`loader.py` — downloads IELTS dataset from Hugging Face, splits into train/val/test.
+`parser.py` — `parse_evaluation()` splits raw evaluations into per-component sections, extracts Scores. `COMPONENT_HEADINGS` is the canonical mapping: `{"task_response": "Task Achievement", "coherence": "Coherence and Cohesion", "lexical": "Lexical Resource", "grammar": "Grammatical Range and Accuracy"}`.
 
 ## Evaluation metrics
 
-All four metrics live in `edsmith/metrics.py` and are computed deterministically (no LLM-as-judge — see `docs/adr/0001-*`):
-- **accuracy**: exact band match
+All four metrics live in `src/edsmith/metrics.py` and are computed deterministically (no LLM-as-judge — see `docs/adr/0001-*`):
+- **accuracy**: exact band match (primary optimization target)
 - **adjacent_accuracy**: within one band step (0.5 increments)
-- **qwk**: quadratic weighted kappa (primary standard for ordinal scoring)
+- **qwk**: quadratic weighted kappa
 - **smd**: standardized mean difference — positive = over-prediction
-
-Primary optimization target is **accuracy**.
 
 ## Test fixtures
 
