@@ -13,6 +13,11 @@ logging.basicConfig(stream=sys.stderr, level=logging.WARNING)
 
 from fastmcp import FastMCP
 
+from edsmith.chief_examiner.mcp import (
+    register_approve_proposal,
+    register_chief_examiner,
+    register_reject_proposal,
+)
 from edsmith.examiner.mcp import register_examiner_pass
 from edsmith.tools.mcp import (
     register_aoa_stats,
@@ -28,12 +33,9 @@ _ = register_aoa_stats(mcp)
 _ = register_complexity_stats(mcp)
 _ = register_discourse_analysis(mcp)
 _ = register_examiner_pass(mcp)
-
-# Domain tools registered here as they are added:
-# from edsmith.chief_examiner.mcp import register_chief_examiner, register_approve_proposal, register_reject_proposal
-# _ = register_chief_examiner(mcp)
-# _ = register_approve_proposal(mcp)
-# _ = register_reject_proposal(mcp)
+_ = register_chief_examiner(mcp)
+_ = register_approve_proposal(mcp)
+_ = register_reject_proposal(mcp)
 
 
 def main():
