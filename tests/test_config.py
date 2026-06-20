@@ -46,32 +46,17 @@ class TestPromptPolicy:
 # ---------------------------------------------------------------------------
 
 class TestSamplingConfig:
-    def test_default_ratios_sum_to_one(self):
-        s = SamplingConfig()
-        total = s.reflection_correct_ratio + s.reflection_adjacent_ratio + s.reflection_large_miss_ratio
-        assert abs(total - 1.0) < 1e-9
-
-    def test_custom_valid_ratios(self):
-        s = SamplingConfig(
-            reflection_correct_ratio=0.5,
-            reflection_adjacent_ratio=0.3,
-            reflection_large_miss_ratio=0.2,
-        )
-        assert s.reflection_correct_ratio == pytest.approx(0.5)
-
-    def test_invalid_ratios_raise(self):
-        with pytest.raises(Exception, match="sum to 1.0"):
-            SamplingConfig(
-                reflection_correct_ratio=0.5,
-                reflection_adjacent_ratio=0.5,
-                reflection_large_miss_ratio=0.5,
-            )
-
     def test_validation_ratio_bounds(self):
         with pytest.raises(Exception):
             SamplingConfig(validation_ratio=0.0)
         with pytest.raises(Exception):
             SamplingConfig(validation_ratio=1.0)
+
+    def test_size_none_by_default(self):
+        assert SamplingConfig().size is None
+
+    def test_test_ratio_none_by_default(self):
+        assert SamplingConfig().test_ratio is None
 
 
 # ---------------------------------------------------------------------------
@@ -88,28 +73,24 @@ class TestSessionConfig:
             prompt_policies={"task_response": {"specificity": 4}}
         )
         assert cfg.prompt_policies["task_response"].specificity == 4
-        # other components still get defaults
         assert "coherence" in cfg.prompt_policies
 
-    def test_n_iterations_min_one(self):
-        with pytest.raises(Exception):
-            SessionConfig(n_iterations=0)
-
     def test_yaml_roundtrip(self, tmp_path):
-        cfg = SessionConfig(n_iterations=3)
-        yaml_path = tmp_path / "session.yaml"
-        cfg.to_yaml(yaml_path)
-        loaded = SessionConfig.from_yaml(yaml_path)
-        assert loaded.n_iterations == 3
-        assert set(loaded.prompt_policies.keys()) == set(COMPONENT_HEADINGS.keys())
-
-    def test_yaml_roundtrip_nested_config(self, tmp_path):
         cfg = SessionConfig()
         cfg.scorer.lora_r = 32
         yaml_path = tmp_path / "session.yaml"
         cfg.to_yaml(yaml_path)
         loaded = SessionConfig.from_yaml(yaml_path)
         assert loaded.scorer.lora_r == 32
+        assert set(loaded.prompt_policies.keys()) == set(COMPONENT_HEADINGS.keys())
+
+    def test_yaml_roundtrip_models(self, tmp_path):
+        cfg = SessionConfig()
+        cfg.models.generator = "openai/gpt-4o"
+        yaml_path = tmp_path / "session.yaml"
+        cfg.to_yaml(yaml_path)
+        loaded = SessionConfig.from_yaml(yaml_path)
+        assert loaded.models.generator == "openai/gpt-4o"
 
     def test_from_yaml_missing_file_raises(self, tmp_path):
         with pytest.raises(Exception):

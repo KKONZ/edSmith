@@ -1,18 +1,7 @@
-council:
-  chair_memory_injection: false
-  critic_rounds: 1
-  enabled: false
-k: 4
-memory:
-  chroma_collection_test: semantic_memory_test
-  chroma_collection_train: semantic_memory_train
-  drive_path: /content/drive/MyDrive/edsmith
 models:
-  chair: qwen/qwen3.5-9b
-  critic: qwen/qwen3.5-9b
-  generator: qwen/qwen3.5-9b
-n_iterations: 5
-phase1_concurrency: 4
+  chair: anthropic/claude-sonnet-4-5
+  critic: qwen/qwen3-14b
+  generator: qwen/qwen3-14b
 prompt_policies:
   coherence:
     additional_instructions: ''
@@ -36,10 +25,6 @@ prompt_policies:
     specificity: 2
 sampling:
   random_state: 42
-  reflection_adjacent_ratio: 0.4
-  reflection_correct_ratio: 0.3
-  reflection_large_miss_ratio: 0.3
-  reflection_n: 30
   size: 600
   test_ratio: 0.05
   validation_ratio: 0.05
@@ -50,7 +35,7 @@ scorer:
   load_in_4bit: true
   lora_alpha: 16
   lora_r: 16
-  max_seq_length: 4096
+  max_seq_length: 512
   max_steps: 40
   model_name: unsloth/Qwen3-1.7B
   per_device_train_batch_size: 2

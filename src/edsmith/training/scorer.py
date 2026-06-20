@@ -43,13 +43,23 @@ def train(session_id: str, iteration: int, drive_path: Path, cfg: dict | None = 
     """Fine-tune Scorer on Phase 1 feedback for this iteration.
 
     Reads:  {drive_path}/sessions/{session_id}/feedback_iter{n}.parquet
+            {drive_path}/sessions/{session_id}/scorer_config.json  (written by init_session)
     Writes: {drive_path}/sessions/{session_id}/models/iter{n}/
     Returns the model path.
     """
     session_dir = drive_path / "sessions" / session_id
     feedback_path = session_dir / f"feedback_iter{iteration}.parquet"
     output_dir = str(session_dir / "models" / f"iter{iteration}")
-    return _train(str(feedback_path), cfg or _default_config(), output_dir)
+
+    if cfg is None:
+        scorer_cfg_path = session_dir / "scorer_config.json"
+        if scorer_cfg_path.exists():
+            loaded = json.loads(scorer_cfg_path.read_text())
+            cfg = {**_default_config(), **{k: v for k, v in loaded.items() if v is not None}}
+        else:
+            cfg = _default_config()
+
+    return _train(str(feedback_path), cfg, output_dir)
 
 
 def evaluate(

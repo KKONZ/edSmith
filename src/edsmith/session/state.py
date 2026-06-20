@@ -6,7 +6,13 @@ from pathlib import Path
 
 from pydantic import BaseModel, Field
 
-from edsmith.config.session import HumanReviewProposal, PromptPolicy, StrategyGuidance
+from edsmith.config.session import (
+    HumanReviewProposal,
+    ModelConfig,
+    PromptPolicy,
+    SamplingConfig,
+    StrategyGuidance,
+)
 
 
 class SessionState(BaseModel):
@@ -14,6 +20,8 @@ class SessionState(BaseModel):
     iteration: int = 0
     policies: dict[str, PromptPolicy] = Field(default_factory=dict)
     strategy_guidance: StrategyGuidance = Field(default_factory=StrategyGuidance)
+    models: ModelConfig = Field(default_factory=ModelConfig)
+    sampling: SamplingConfig = Field(default_factory=SamplingConfig)
     model_path: str | None = None
     parent_session_id: str | None = None
 

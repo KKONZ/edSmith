@@ -7,8 +7,8 @@ from pathlib import Path
 import pandas as pd
 from fastmcp import FastMCP
 
-from edsmith.config.session import ModelConfig
 from edsmith.data.parser import COMPONENT_HEADINGS
+from edsmith.data.loader import apply_size_limit, train_test_split
 from edsmith.examiner.feedback import generate_feedback
 from edsmith.providers.openrouter import OpenRouterProvider
 from edsmith.session.state import load_state
@@ -20,7 +20,7 @@ def _drive_path() -> Path:
     return Path(os.environ.get("EDSMITH_DRIVE_PATH", _DEFAULT_DRIVE))
 
 
-def _ensure_session_data(drive_path: Path, session_id: str) -> pd.DataFrame:
+def _ensure_session_data(drive_path: Path, session_id: str, state) -> pd.DataFrame:
     """Return the training DataFrame, initialising session data on first call."""
     data_dir = drive_path / "sessions" / session_id / "data"
     train_path = data_dir / "train.parquet"
@@ -28,12 +28,19 @@ def _ensure_session_data(drive_path: Path, session_id: str) -> pd.DataFrame:
     if train_path.exists():
         return pd.read_parquet(train_path)
 
-    from edsmith.data.loader import load_ielts, train_test_split
+    from edsmith.data.loader import load_ielts
 
     data_dir.mkdir(parents=True, exist_ok=True)
+    s = state.sampling
     raw_train = load_ielts("train")
     raw_test = load_ielts("test")
-    train_df, val_df = train_test_split(raw_train)
+
+    if s.size:
+        raw_train, raw_test = apply_size_limit(raw_train, raw_test, s.size, s.random_state)
+    if s.test_ratio is not None:
+        raw_test = raw_test.sample(frac=s.test_ratio, random_state=s.random_state).reset_index(drop=True)
+
+    train_df, val_df = train_test_split(raw_train, validation_ratio=s.validation_ratio, random_state=s.random_state)
 
     train_df.to_parquet(data_dir / "train.parquet", index=False)
     val_df.to_parquet(data_dir / "val.parquet", index=False)
@@ -99,10 +106,9 @@ def register_examiner_pass(app: FastMCP):
     ) -> dict:
         drive_path = _drive_path()
         state = load_state(drive_path, session_id)
-        train_df = await asyncio.to_thread(_ensure_session_data, drive_path, session_id)
+        train_df = await asyncio.to_thread(_ensure_session_data, drive_path, session_id, state)
 
         provider = OpenRouterProvider()
-        model_config = ModelConfig()
         semaphore = asyncio.Semaphore(concurrency)
         records: list[dict] = []
         warnings: list[str] = []
@@ -116,7 +122,7 @@ def register_examiner_pass(app: FastMCP):
                         policies=state.policies,
                         strategy=state.strategy_guidance,
                         provider=provider,
-                        model_config=model_config,
+                        model_config=state.models,
                     )
                     for component, fb in feedbacks.items():
                         records.append({

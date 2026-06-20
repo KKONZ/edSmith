@@ -7,7 +7,6 @@ import pandas as pd
 from fastmcp import FastMCP
 
 from edsmith.chief_examiner.diagnostic import run_diagnostic
-from edsmith.config.session import ModelConfig
 from edsmith.providers.openrouter import OpenRouterProvider
 from edsmith.session.state import (
     load_metrics,
@@ -63,7 +62,6 @@ def register_chief_examiner(app: FastMCP):
             }
 
         provider = OpenRouterProvider()
-        model_config = ModelConfig()
 
         _, proposal = await run_diagnostic(
             session_id=session_id,
@@ -74,7 +72,7 @@ def register_chief_examiner(app: FastMCP):
             policies=state.policies,
             strategy=state.strategy_guidance,
             provider=provider,
-            model_config=model_config,
+            model_config=state.models,
             drive_path=drive_path,
             critique=critique,
         )
