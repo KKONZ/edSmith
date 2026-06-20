@@ -94,7 +94,7 @@ src/edsmith/
 
 - ✅ **Commit 7:** Add `StrategyGuidance` and `DiagnosticReport` Pydantic models to `src/edsmith/config/session.py`. Add `HumanReviewProposal` persisted as `{drive_path}/sessions/{session_id}/proposals/iter{n}.json`. Remove `CouncilConfig` from `SessionConfig`. Add `human_in_the_loop: bool = False` field (no-op for now; used later by the MCP server to decide whether to auto-approve).
 
-**Commit 8:** Add `docs/adr/0010-session-state-on-disk.md` and `docs/adr/0011-diagnostic-on-training-data.md`.
+- ✅ **Commit 8:** Add `docs/adr/0010-session-state-on-disk.md` and `docs/adr/0011-diagnostic-on-training-data.md`.
 
 ### Group D — Linguistic feature tools
 
