@@ -5,7 +5,6 @@ import uuid
 from pathlib import Path
 from typing import Callable, TypedDict
 
-from tqdm.asyncio import tqdm as atqdm
 
 import pandas as pd
 from langgraph.checkpoint.memory import MemorySaver
@@ -165,7 +164,7 @@ class Orchestrator:
         policies = {k: PromptPolicy(**v) for k, v in state["policies"].items()}
         sample = self._get_sample()
 
-        print(f"\n[Iteration {iteration}/{self._config.n_iterations}] Phase 1  ·  generating feedback for {len(sample)} essays …")
+        print(f"\n[Iteration {iteration}/{self._config.n_iterations}] Phase 1  ·  {len(sample)} essays  ·  concurrency={self._config.phase1_concurrency}")
 
         sem = asyncio.Semaphore(self._config.phase1_concurrency)
 
@@ -177,12 +176,37 @@ class Orchestrator:
                     policies=policies,
                 )
 
-        tasks = [_bounded(row) for _, row in sample.iterrows()]
-        results = await atqdm.gather(*tasks, desc="  essays", unit="essay")
+        from tqdm.asyncio import tqdm as tqdm_bar
+
+        pbar = tqdm_bar(total=len(sample), desc="  essays", unit="essay")
+
+        async def _tracked(coro):
+            try:
+                return await coro
+            except Exception as exc:
+                return exc
+            finally:
+                pbar.update(1)
+
+        tasks = [_tracked(_bounded(row)) for _, row in sample.iterrows()]
+        results = await asyncio.gather(*tasks)
+        pbar.close()
 
         records = []
-        for (_, row), comp_results in zip(sample.iterrows(), results):
-            for component, fb in comp_results.items():
+        n_errors = 0
+        n_missing_score = 0
+        total_in_tokens = 0
+        total_out_tokens = 0
+        for (_, row), result in zip(sample.iterrows(), results):
+            if isinstance(result, Exception):
+                n_errors += 1
+                print(f"  [Phase 1] essay skipped — {type(result).__name__}: {result}")
+                continue
+            for component, fb in result.items():
+                if fb.score is None:
+                    n_missing_score += 1
+                total_in_tokens += fb.input_tokens
+                total_out_tokens += fb.output_tokens
                 records.append({
                     "question": row["question"],
                     "essay": row["essay"],
@@ -191,6 +215,14 @@ class Orchestrator:
                     "feedback_text": fb.text,
                     "score": fb.score,
                 })
+
+        ok = len(sample) - n_errors
+        print(
+            f"  Phase 1 done: {ok}/{len(sample)} essays OK  ({n_errors} API errors, {n_missing_score} missing scores)"
+            f"  tokens: {total_in_tokens:,} in / {total_out_tokens:,} out"
+        )
+        if not records:
+            raise RuntimeError("Phase 1 produced no feedback records — check API key and model availability.")
 
         feedback_df = pd.DataFrame(records)
         path = self._drive_path / f"feedback_iter{state['iteration']}.parquet"

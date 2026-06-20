@@ -223,6 +223,8 @@ def _extract_tag(content: str, tag: str) -> str:
 def _extract_score(content: str) -> float | None:
     m = re.search(r"<score>\s*(\d+(?:\.\d+)?)\s*</score>", content)
     if not m:
+        import sys
+        print(f"  [feedback] no <score> tag in response (first 120 chars): {content[:120]!r}", file=sys.stderr)
         return None
     try:
         val = float(m.group(1))
