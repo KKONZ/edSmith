@@ -158,9 +158,9 @@ src/edsmith/
 
 ### Group J — ADR updates
 
-**Commit 24:** Update `docs/adr/0002-langgraph-orchestration-crewai-council.md` — reflects full architectural inversion, removal of Python agent classes, removal of LangGraph.
+- ✅ **Commit 24:** Update `docs/adr/0002-langgraph-orchestration-crewai-council.md` — reflects full architectural inversion, removal of Python agent classes, removal of LangGraph.
 
-**Commit 25:** Update `docs/adr/0008-structured-prompt-policy-as-search-interface.md` — `StrategyGuidance` extends `PromptPolicy`; both persisted in `SessionState` on disk.
+- ✅ **Commit 25:** Update `docs/adr/0008-structured-prompt-policy-as-search-interface.md` — `StrategyGuidance` extends `PromptPolicy`; both persisted in `SessionState` on disk.
 
 **Commit 26:** Update `CLAUDE.md` — full architecture section rewrite to reflect new `src/` layout, domain subpackages, MCP tool structure, agent markdown files, and session loop.
 

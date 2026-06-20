@@ -1,9 +1,17 @@
-# Structured Prompt Policy as the Tree Search Interface
+# Structured PromptPolicy and StrategyGuidance as the Search Interface
 
-The tree search needs to modify Feedback generation configuration across iterations. The question is whether the agent operates on raw prompt text or a structured abstraction.
+Feedback generation is configured through two structured models persisted in `SessionState` on disk: `PromptPolicy` (one per IELTS component) and `StrategyGuidance` (one per session). The Chief Examiner proposes changes to both after each iteration; the human approves or rejects the proposal before changes are applied.
 
-We use a structured prompt policy as the primary search interface. Each Component has its own policy with typed fields (e.g., specificity level, evidence required, feedback granularity). A free-text `additional_instructions` field is available alongside the structured fields for nuance the schema cannot capture.
+**Two layers, two concerns:**
 
-**Why:** Raw prompt text gives the agent an unbounded search space that is difficult to search systematically, hard to compare across sessions, and easy to overfit. Structured fields give the tree search a finite, well-defined action space where changes between sessions are explicit and comparable. The `additional_instructions` escape hatch preserves flexibility without making it the default.
+`PromptPolicy` controls how the Examiner formats and styles its Feedback for a given component — specificity level, whether evidence must be cited, feedback granularity (component-only vs. overall), and a free-text `additional_instructions` escape hatch. These fields affect every essay in the component uniformly.
 
-**How it works:** The tree search modifies structured policy fields first. The `additional_instructions` field becomes relevant once the tree has enough episodic data to reason about subtler changes that the structured fields cannot express. Policy objects are versioned per session in episodic memory.
+`StrategyGuidance` controls what information the Examiner collects before generating Feedback — which linguistic tool outputs to inject (grammar errors, AoA statistics, syntactic complexity, discourse structure), whether to use contrastive anchoring, and per-component focus instructions for this iteration. These fields affect the Examiner's information environment rather than its output format.
+
+**Why structured fields over raw prompt text:** An unstructured prompt gives the Chief Examiner an unbounded action space that is hard to compare across iterations and easy to overfit to a specific training batch. Structured fields make each proposed change explicit and auditable — the human reviewing a proposal can see exactly which fields changed and by how much. The `additional_instructions` field provides flexibility for targeted corrections the schema cannot capture without making free-form editing the default.
+
+**Why two models instead of one:** `PromptPolicy` changes are relatively fine-grained and component-specific. `StrategyGuidance` changes are session-wide and affect cost and latency (each enabled linguistic tool adds an extra analysis step per essay). Separating them lets the Chief Examiner and human reason about format changes and information changes independently, and makes the proposal easier to evaluate.
+
+**How changes are applied:** `approve_proposal` writes the proposed `StrategyGuidance` and all four component `PromptPolicy` values to `SessionState` and increments the iteration counter. The next `run_examiner_pass` reads the updated state. If the human rejects, the critique is stored and the Chief Examiner generates a revised proposal in the same iteration — `SessionState` is not modified until an approval.
+
+**Consequences:** Every accepted change is recorded as an approved `HumanReviewProposal` on disk, giving the Chief Examiner a complete history of what was tried and what the human said about each proposal. The iteration history is the primary mechanism for avoiding redundant proposals and building on prior progress.
