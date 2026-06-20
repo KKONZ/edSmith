@@ -51,8 +51,15 @@ class OpenRouterProvider(LLMProvider):
     def _parse(response) -> CompletionResponse:
         choice = response.choices[0]
         usage = response.usage
+        content = choice.message.content or ""
+        if not content:
+            finish = getattr(choice, "finish_reason", "unknown")
+            raise RuntimeError(
+                f"Model returned empty content (finish_reason={finish!r}, model={response.model!r}). "
+                "Check model ID, rate limits, and OpenRouter dashboard."
+            )
         return CompletionResponse(
-            content=choice.message.content or "",
+            content=content,
             model=response.model,
             input_tokens=usage.prompt_tokens if usage else 0,
             output_tokens=usage.completion_tokens if usage else 0,
