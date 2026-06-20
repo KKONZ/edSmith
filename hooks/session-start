@@ -1,0 +1,112 @@
+#!/usr/bin/env bash
+# SessionStart hook for edsmith.
+# Checks environment readiness and injects status as additionalContext so
+# Claude Code knows the state of the project before the first user message.
+
+set -euo pipefail
+
+# ---------------------------------------------------------------------------
+# Environment variables
+# ---------------------------------------------------------------------------
+
+if [ -n "${OPENROUTER_API_KEY:-}" ]; then
+    api_key_status="set"
+else
+    api_key_status="NOT SET — LLM calls will fail"
+fi
+
+drive_path="${EDSMITH_DRIVE_PATH:-/content/drive/MyDrive/edsmith}"
+if [ -n "${EDSMITH_DRIVE_PATH:-}" ]; then
+    drive_status="set (${EDSMITH_DRIVE_PATH})"
+else
+    drive_status="using default (${drive_path})"
+fi
+
+# ---------------------------------------------------------------------------
+# Optional [tools] dependencies
+# ---------------------------------------------------------------------------
+
+check_python_pkg() {
+    python -c "import $1" 2>/dev/null && echo "installed" || echo "NOT INSTALLED"
+}
+
+spacy_status="$(check_python_pkg spacy)"
+ltp_status="$(check_python_pkg language_tool_python)"
+
+# ---------------------------------------------------------------------------
+# Active sessions
+# ---------------------------------------------------------------------------
+
+sessions_dir="${drive_path}/sessions"
+session_lines=""
+
+if [ -d "${sessions_dir}" ]; then
+    count=0
+    for state_file in "${sessions_dir}"/*/state.json; do
+        [ -f "${state_file}" ] || continue
+        sid="$(basename "$(dirname "${state_file}")")"
+        iter="$(python -c "import json,sys; d=json.load(open('${state_file}')); print(d.get('iteration',0))" 2>/dev/null || echo "?")"
+        parent="$(python -c "import json,sys; d=json.load(open('${state_file}')); print(d.get('parent_session_id') or 'root')" 2>/dev/null || echo "?")"
+
+        # Check for a pending proposal at the current iteration
+        proposal_file="${sessions_dir}/${sid}/proposals/iter$((iter > 0 ? iter - 1 : 0)).json"
+        proposal_status=""
+        if [ -f "${proposal_file}" ]; then
+            pstatus="$(python -c "import json; d=json.load(open('${proposal_file}')); print(d.get('status',''))" 2>/dev/null || echo "")"
+            [ "${pstatus}" = "pending" ] && proposal_status=" ⚠ proposal pending"
+        fi
+
+        session_lines="${session_lines}  ${sid}  iteration=${iter}  parent=${parent}${proposal_status}\n"
+        count=$((count + 1))
+    done
+    if [ "${count}" -eq 0 ]; then
+        sessions_summary="no sessions found under ${sessions_dir}"
+    else
+        sessions_summary="${count} session(s):\n${session_lines}"
+    fi
+else
+    sessions_summary="sessions directory not found at ${sessions_dir} (Drive may not be mounted)"
+fi
+
+# ---------------------------------------------------------------------------
+# Overall readiness
+# ---------------------------------------------------------------------------
+
+missing=()
+[ "${api_key_status}" != "set" ] && missing+=("OPENROUTER_API_KEY")
+[ "${spacy_status}" != "installed" ] && missing+=("spacy")
+
+if [ ${#missing[@]} -eq 0 ]; then
+    overall="ready"
+else
+    overall="NOT READY — missing: $(IFS=', '; echo "${missing[*]}")"
+fi
+
+# ---------------------------------------------------------------------------
+# Build output
+# ---------------------------------------------------------------------------
+
+status="# edsmith status
+OPENROUTER_API_KEY: ${api_key_status}
+EDSMITH_DRIVE_PATH: ${drive_status}
+spacy [tools]: ${spacy_status}
+language_tool_python [tools]: ${ltp_status}
+status: ${overall}
+
+## Active sessions
+$(printf "${sessions_summary}")"
+
+# Escape for JSON embedding
+escape_for_json() {
+    local s="$1"
+    s="${s//\\/\\\\}"
+    s="${s//\"/\\\"}"
+    s="${s//$'\n'/\\n}"
+    s="${s//$'\r'/\\r}"
+    s="${s//$'\t'/\\t}"
+    printf '%s' "$s"
+}
+
+escaped="$(escape_for_json "$status")"
+printf '{"additionalContext": "%s"}\n' "$escaped"
+exit 0

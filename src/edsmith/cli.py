@@ -42,33 +42,27 @@ def init_config(
 
 
 # ------------------------------------------------------------------
-# show-tree
+# start-server
 # ------------------------------------------------------------------
 
-@app.command("show-tree")
-def show_tree(
-    drive: Optional[Path] = typer.Option(None, "--drive", help="Path to edsmith drive directory"),
+@app.command("start-server")
+def start_server(
+    port: int = typer.Option(8000, "--port", "-p", help="Port to listen on"),
+    host: str = typer.Option("0.0.0.0", "--host", help="Host to bind to"),
+    drive: Optional[Path] = typer.Option(
+        None, "--drive",
+        help="Override EDSMITH_DRIVE_PATH (default: /content/drive/MyDrive/edsmith)",
+    ),
 ) -> None:
-    """Print the episodic memory session tree."""
-    from edsmith.memory.episodic import EpisodicMemory
+    """Start the edSmith MCP server (all domain tools registered)."""
+    import os
 
-    drive_path = drive or Path("/content/drive/MyDrive/edsmith")
-    mem = EpisodicMemory(drive_path=drive_path)
-    records = mem.load_all()
+    if drive:
+        os.environ["EDSMITH_DRIVE_PATH"] = str(drive)
 
-    if not records:
-        typer.echo("No sessions found.")
-        return
+    typer.echo(f"Starting edsmith MCP server on {host}:{port}")
 
-    for r in sorted(records, key=lambda r: (r.tree_depth, r.created_at)):
-        indent = "  " * r.tree_depth
-        acc = f"{r.best_accuracy:.4f}" if r.best_accuracy is not None else "—"
-        iters = len(r.iterations)
-        typer.echo(
-            f"{indent}{r.session_id}"
-            f"  depth={r.tree_depth}"
-            f"  parent={r.parent_session_id or 'root'}"
-            f"  iters={iters}"
-            f"  best_acc={acc}"
-            f"  arch={r.architecture}"
-        )
+    from edsmith.mcp.__main__ import mcp
+    mcp.run(transport="http", host=host, port=port)
+
+

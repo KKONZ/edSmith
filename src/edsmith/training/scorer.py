@@ -1,152 +1,78 @@
-"""edsmith MCP training server — runs inside a Colab GPU session.
+"""Scorer training and evaluation — Qwen3 + LoRA + CORN loss.
 
-Based on the colab-mcp pattern (https://github.com/googlecolab/colab-mcp).
-Uses fastmcp 2.x with streamable-http transport to avoid HTTP/2 issues
-with Cloudflare tunnels.
-
-Setup in Colab (two cells):
-
---- Cell 1: install & tunnel ---
-    !pip install -q "edsmith[training] @ git+https://github.com/kkonz/edSmith.git" fastmcp
-    !wget -q https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 \
-         -O cloudflared && chmod +x cloudflared
-
-    import subprocess, re
-
-    proc = subprocess.Popen(
-        ["./cloudflared", "tunnel", "--url", "http://localhost:8000"],
-        stderr=subprocess.PIPE,
-        text=True,
-    )
-
-    for line in proc.stderr:
-        m = re.search(r"https://[a-z0-9-]+\\.trycloudflare\\.com", line)
-        if m:
-            print(f"\\nMCP URL: {m.group()}/mcp\\n")
-            break
-
---- Cell 2: start server (blocking) ---
-    import unsloth  # must be first — patches transformers before any other import
-    import threading
-    from edsmith.training.mcp.server import mcp
-
-    t = threading.Thread(target=mcp.run, kwargs={"transport": "http", "port": 8000}, daemon=True)
-    t.start()
-    t.join()
-
-Then on your local machine:
-    edsmith run-session --config session.yaml --mcp-url https://<tunnel-id>.trycloudflare.com/mcp
+GPU-only. Install [training] extras before importing:
+    pip install -e ".[training]"
 """
 
 from __future__ import annotations
 
-import asyncio
 import json
 import sys
 from pathlib import Path
 
-from fastmcp import FastMCP
-
 from edsmith.data.parser import COMPONENT_HEADINGS
-from edsmith.metrics import compute_all
 
-mcp = FastMCP("edsmith-training")
-
-print("[edsmith-server] Server module loaded", flush=True, file=sys.stderr)
-
-# IELTS component band values — ordinal classes for CORN
 _BANDS: list[float] = [b / 2 for b in range(2, 19)]  # 1.0 … 9.0  (17 values)
-_NUM_CLASSES: int = len(_BANDS)
 _BAND_TO_IDX: dict[float, int] = {b: i for i, b in enumerate(_BANDS)}
+_EVAL_BATCH_SIZE = 8
+
+
+def _log(msg: str) -> None:
+    print(f"[edsmith-train] {msg}", flush=True, file=sys.stderr)
+
+
+def _default_config() -> dict:
+    return {
+        "model_name": "unsloth/Qwen3-4B-unsloth-bnb-4bit",
+        "lora_r": 16,
+        "lora_alpha": 16,
+        "max_steps": 100,
+        "per_device_train_batch_size": 2,
+        "gradient_accumulation_steps": 4,
+        "learning_rate": 2e-4,
+        "warmup_steps": 5,
+        "component": None,
+    }
 
 
 # ------------------------------------------------------------------
-# Tool: train_scorer
+# Public API
 # ------------------------------------------------------------------
 
-@mcp.tool()
-async def train_scorer(
-    feedback_data: str,
-    scorer_config: str,
-    output_dir: str,
-) -> str:
-    """Fine-tune the Scorer (Qwen3 + LoRA + CORN loss) on Phase 1 feedback.
+def train(session_id: str, iteration: int, drive_path: Path, cfg: dict | None = None) -> str:
+    """Fine-tune Scorer on Phase 1 feedback for this iteration.
 
-    Args:
-        feedback_data: Base64-encoded parquet bytes with columns
-            [question, essay, band, component, feedback_text, score].
-        scorer_config: JSON string of ScorerConfig fields.
-        output_dir: Directory to save the trained model.
-
-    Returns:
-        JSON string {"model_path": str}.
+    Reads:  {drive_path}/sessions/{session_id}/feedback_iter{n}.parquet
+    Writes: {drive_path}/sessions/{session_id}/models/iter{n}/
+    Returns the model path.
     """
-    import base64, os, tempfile
-    print("[edsmith-server] train_scorer called", flush=True, file=sys.stderr)
-    raw = base64.b64decode(feedback_data)
-    with tempfile.NamedTemporaryFile(suffix=".parquet", delete=False) as f:
-        f.write(raw)
-        tmp_path = f.name
-    print(f"[edsmith-server] feedback parquet written to {tmp_path}", flush=True, file=sys.stderr)
-    try:
-        cfg = json.loads(scorer_config)
-        loop = asyncio.get_event_loop()
-        model_path = await loop.run_in_executor(None, _train, tmp_path, cfg, output_dir)
-        return json.dumps({"model_path": model_path})
-    finally:
-        os.unlink(tmp_path)
+    session_dir = drive_path / "sessions" / session_id
+    feedback_path = session_dir / f"feedback_iter{iteration}.parquet"
+    output_dir = str(session_dir / "models" / f"iter{iteration}")
+    return _train(str(feedback_path), cfg or _default_config(), output_dir)
 
 
-# ------------------------------------------------------------------
-# Tool: evaluate_scorer
-# ------------------------------------------------------------------
+def evaluate(
+    session_id: str,
+    iteration: int,
+    split: str,
+    drive_path: Path,
+) -> tuple[list[float], list[float]]:
+    """Evaluate Scorer on val or test split.
 
-@mcp.tool()
-async def evaluate_scorer(
-    model_path: str,
-    eval_data: str,
-) -> str:
-    """Run the trained Scorer on an evaluation set and return predictions.
-
-    Args:
-        model_path: Path to the saved model directory (on Colab / Drive).
-        eval_data: Base64-encoded parquet bytes with columns [question, essay, band].
-
-    Returns:
-        JSON string {"y_true": [...], "y_pred": [...]}.
-        Predictions are overall band scores (mean of four component predictions).
+    Reads:  {drive_path}/sessions/{session_id}/models/iter{n}/
+            {drive_path}/sessions/{session_id}/data/{split}.parquet
+    Returns (y_true, y_pred).
     """
-    import base64, os, tempfile
-    raw = base64.b64decode(eval_data)
-    with tempfile.NamedTemporaryFile(suffix=".parquet", delete=False) as f:
-        f.write(raw)
-        tmp_path = f.name
-    try:
-        loop = asyncio.get_event_loop()
-        y_true, y_pred = await loop.run_in_executor(None, _evaluate, model_path, tmp_path)
-        return json.dumps({"y_true": y_true, "y_pred": y_pred})
-    finally:
-        os.unlink(tmp_path)
-
-
-# ------------------------------------------------------------------
-# Tool: compute_metrics
-# ------------------------------------------------------------------
-
-@mcp.tool()
-def compute_metrics(y_true: list[float], y_pred: list[float]) -> dict[str, float]:
-    """Compute accuracy, adjacent_accuracy, QWK, and SMD."""
-    return compute_all(y_true, y_pred, bands=_BANDS)
+    session_dir = drive_path / "sessions" / session_id
+    model_path = str(session_dir / "models" / f"iter{iteration}")
+    data_path = str(session_dir / "data" / f"{split}.parquet")
+    return _evaluate(model_path, data_path)
 
 
 # ------------------------------------------------------------------
 # Training implementation
 # ------------------------------------------------------------------
-
-def _log(msg: str) -> None:
-    import sys
-    print(f"[edsmith-train] {msg}", flush=True, file=sys.stderr)
-
 
 def _train(feedback_path: str, cfg: dict, output_dir: str) -> str:
     from unsloth import FastLanguageModel  # must be first — patches transformers/torch
@@ -163,7 +89,6 @@ def _train(feedback_path: str, cfg: dict, output_dir: str) -> str:
     _log("Loading feedback data …")
     df = pd.read_parquet(feedback_path)
     df = df.dropna(subset=["score"])
-    _log(f"component setting: {cfg.get('component')!r}  (df has {df['component'].unique().tolist() if 'component' in df.columns else 'no component col'})")
     if cfg.get("component"):
         df = df[df["component"] == cfg["component"]]
         _log(f"Filtered to component '{cfg['component']}': {len(df)} rows")
@@ -175,7 +100,6 @@ def _train(feedback_path: str, cfg: dict, output_dir: str) -> str:
     _log(f"Loading model {cfg['model_name']} (4bit) …")
     model, tokenizer = FastLanguageModel.from_pretrained(
         model_name=cfg["model_name"],
-        #max_seq_length=cfg["max_seq_length"],
         load_in_4bit=True,
     )
     _log("Model loaded. Applying LoRA …")
@@ -201,7 +125,6 @@ def _train(feedback_path: str, cfg: dict, output_dir: str) -> str:
             per_device_train_batch_size=cfg["per_device_train_batch_size"],
             gradient_accumulation_steps=cfg["gradient_accumulation_steps"],
             learning_rate=cfg["learning_rate"],
-            #max_seq_length=cfg["max_seq_length"],
             warmup_steps=cfg.get("warmup_steps", 5),
             optim="adamw_8bit",
             lr_scheduler_type="linear",
@@ -223,16 +146,12 @@ def _train(feedback_path: str, cfg: dict, output_dir: str) -> str:
     tokenizer.save_pretrained(str(out))
     (out / "edsmith_config.json").write_text(json.dumps({"component": cfg.get("component")}))
     _log(f"Saved to {out}")
-
     return str(out)
 
 
 # ------------------------------------------------------------------
 # Evaluation implementation
 # ------------------------------------------------------------------
-
-_EVAL_BATCH_SIZE = 8
-
 
 def _evaluate(model_path: str, eval_data_path: str) -> tuple[list[float], list[float]]:
     from unsloth import FastLanguageModel  # must be first
@@ -254,15 +173,12 @@ def _evaluate(model_path: str, eval_data_path: str) -> tuple[list[float], list[f
         load_in_4bit=True,
     )
     FastLanguageModel.for_inference(model)
-    #model.generation_config.max_new_tokens = 8
-    #model.generation_config.max_length = None
     tokenizer.padding_side = "left"
 
     target_components = [component] if component else list(COMPONENT_HEADINGS.keys())
     n_components = len(target_components)
     _log(f"Evaluating component(s): {target_components}")
 
-    # Build all prompts upfront and filter rows with unparseable bands
     valid_bands: list[float] = []
     all_prompts: list[str] = []
     for _, row in df.iterrows():
@@ -273,9 +189,10 @@ def _evaluate(model_path: str, eval_data_path: str) -> tuple[list[float], list[f
         valid_bands.append(band)
         for comp in target_components:
             messages = [{"role": "user", "content": _format_input(row["question"], row["essay"], comp)}]
-            all_prompts.append(tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True))
+            all_prompts.append(
+                tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+            )
 
-    # Batched inference
     all_generated: list[str] = []
     with torch.no_grad():
         for i in range(0, len(all_prompts), _EVAL_BATCH_SIZE):
@@ -287,7 +204,6 @@ def _evaluate(model_path: str, eval_data_path: str) -> tuple[list[float], list[f
                 all_generated.append(tokenizer.decode(o[input_len:], skip_special_tokens=True).strip())
             _log(f"  eval batch {i // _EVAL_BATCH_SIZE + 1}/{-(-len(all_prompts) // _EVAL_BATCH_SIZE)}")
 
-    # Aggregate component predictions per row — skip unparseable outputs
     y_true: list[float] = []
     y_pred: list[float] = []
     n_skipped = 0
@@ -306,12 +222,12 @@ def _evaluate(model_path: str, eval_data_path: str) -> tuple[list[float], list[f
         y_true.append(band)
         y_pred.append(round(float(np.mean(component_preds)) * 2) / 2)
 
-    _log(f"Evaluation complete. {len(y_true)} predictions  ({n_skipped} rows skipped — no parseable output).")
+    _log(f"Evaluation complete. {len(y_true)} predictions ({n_skipped} rows skipped).")
     return y_true, y_pred
 
 
 # ------------------------------------------------------------------
-# Dataset
+# Dataset helpers
 # ------------------------------------------------------------------
 
 def _build_dataset(df, tokenizer):
@@ -326,22 +242,10 @@ def _build_dataset(df, tokenizer):
 
     return Dataset.from_dict({
         "text": [_to_chat(row) for _, row in df.iterrows()],
-        "label": df["label"].tolist(),  # ordinal class index — used by CORN loss via compute_loss_func
+        "label": df["label"].tolist(),
     })
 
-
-# ------------------------------------------------------------------
-# Helpers
-# ------------------------------------------------------------------
 
 def _format_input(question: str, essay: str, component: str) -> str:
     component_name = COMPONENT_HEADINGS.get(component, component)
     return f"Component: {component_name}\n\nQuestion: {question}\n\nEssay: {essay}"
-
-
-# ------------------------------------------------------------------
-# Entry point
-# ------------------------------------------------------------------
-
-if __name__ == "__main__":
-    mcp.run(transport="http", port=8000)

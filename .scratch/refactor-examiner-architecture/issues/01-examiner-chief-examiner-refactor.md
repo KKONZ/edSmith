@@ -128,11 +128,19 @@ src/edsmith/
 
 - ✅ **Commit 17:** Add `src/edsmith/chief_examiner/mcp/tools.py`. `register_chief_examiner` — reads feedback parquet + `metrics_iter{n}.json`, calls `run_diagnostic`, saves proposal, returns flattened proposal dict with diagnostic summary and proposed changes. Returns error dict (not exception) if parquet or metrics missing. `register_approve_proposal` — applies proposed policies/strategy to `SessionState`, increments `iteration`, marks proposal approved. `register_reject_proposal` — stores critique, marks rejected, SessionState unchanged, returns next-step hint. All three registered in `src/edsmith/mcp/__main__.py`.
 
-**Commit 18:** Add `tests/chief_examiner/test_diagnostic.py`. Test via `StubProvider` + small mock feedback DataFrame + temporary session directory with pre-written metrics and proposal files: `DiagnosticReport` correctly parsed; policy updates merge correctly; unknown fields ignored; history context includes prior iteration summaries; history empty on first iteration.
+- ✅ **Commit 18:** Add `tests/chief_examiner/test_diagnostic.py` (22 tests, all passing). `TestLoadIterationHistory` (6) — first iteration, missing files, metrics present, approved/rejected proposals in history, multiple iterations. `TestParseResponse` (10) — summary extracted, per-component issues, strategy merged onto current, policies merged, unchanged components preserved, unknown fields ignored, malformed JSON fallback, missing tag fallback, per_component_focus, pending status. `TestRunDiagnostic` (6) — report+proposal returned, summary populated, first iteration no files needed, history loaded at iteration 1, critique accepted, metric summary stored.
 
 ### Group G — CLI and top-level server
 
-**Commit 19:** Add `edsmith start-server` CLI command to `src/edsmith/cli.py`. Starts `src/edsmith/mcp/__main__.py` on a configurable port using `fastmcp`. Add `docs/adr/0013-human-gate-via-conversation.md` documenting that the human checkpoint is the Claude Code conversation.
+- ✅ **Commit 19:** Add `edsmith start-server` CLI command (`--port`, `--host`, `--drive` options; `--drive` sets `EDSMITH_DRIVE_PATH` env var). Imports `mcp` from `__main__` and calls `mcp.run(transport="http", ...)`. Add `docs/adr/0013-human-gate-via-conversation.md` — documents why the human gate is a conversation pause (not a threshold or timer), how approve/reject/critique flows work, and why auto-approve was rejected.
+
+- ✅ **Commit 19b:** Add `hooks/session-start` (checks `OPENROUTER_API_KEY`, `EDSMITH_DRIVE_PATH`, `spacy`/`language_tool_python` installed, active sessions from `state.json` with pending-proposal warnings; outputs `{"additionalContext": "..."}`). Add `hooks/run-hook.cmd` polyglot Windows/Unix wrapper. Add `.claude/settings.json` wiring `SessionStart` to `run-hook.cmd session-start`. Removed stale `show-tree` CLI command (read from episodic markdown files that nothing writes to in the new architecture).
+
+### Group G.5 — colab-mcp integration
+
+**Context:** Instead of running our own FastMCP server in Colab (exposed via Cloudflare tunnel), use the official `googlecolab/colab-mcp` package. It runs locally as an MCP server and bridges to a Colab browser session, exposing `run_cell` / `add_cell` tools. Claude Code calls `run_cell` with training/evaluation Python code that executes on the Colab GPU. No tunnel, no URL registration, no custom Colab server required.
+
+**Commit 19c:** Remove `src/edsmith/training/mcp/server.py` and `src/edsmith/mcp/client.py` (replaced by colab-mcp). Add `colab-mcp` entry to `.claude/settings.json` under `mcpServers` (alongside existing hooks config) — uses `uvx git+https://github.com/googlecolab/colab-mcp` command. Add `notebooks/edsmith_training.ipynb` with three cells: (1) setup cell (`pip install -e ".[training]"` + spaCy model download), (2) train cell (imports `edsmith.training.scorer`, calls `train(session_id, iteration, drive_path)`), (3) evaluate cell (calls `evaluate(session_id, iteration, split, drive_path)`). Add `docs/adr/0015-colab-mcp-training.md` — documents why official colab-mcp replaces custom tunnel server, trade-offs (no always-on server, `run_cell` latency, notebook must be open in browser). Update `docs/guides/colab-setup.md` — replace Cloudflare tunnel section with colab-mcp install instructions (`uvx` already handled by settings.json) and how to open the training notebook.
 
 ### Group H — Agent markdown content
 
@@ -164,7 +172,7 @@ src/edsmith/
 **Domain subpackages and their responsibilities:**
 - `examiner/` — feedback generation logic; `mcp/tools.py` exposes `run_examiner_pass`
 - `chief_examiner/` — diagnostic and reflection logic; `mcp/tools.py` exposes `run_chief_examiner`, `approve_proposal`, `reject_proposal`
-- `training/` — Qwen3 + LoRA scorer training and evaluation (unchanged logic); `mcp/server.py` is the Colab server
+- `training/` — Qwen3 + LoRA scorer training and evaluation (unchanged logic); `notebooks/edsmith_training.ipynb` exposes train/evaluate cells invoked via colab-mcp `run_cell`
 - `tools/` — linguistic feature implementations; `mcp/tools.py` exposes `grammar_check`, `aoa_stats`, `complexity_stats`
 - `session/` — on-disk session state model and helpers
 - `mcp/` — top-level aggregating server (`__main__.py`) + Colab client
@@ -219,6 +227,6 @@ src/edsmith/
 
 ## Further Notes
 
-The Colab MCP server logic (`training/mcp/server.py`) is unchanged functionally — only its file location moves. The Colab setup instructions in the docstring reference `from edsmith.training.mcp.server import mcp` after the move.
+Training and evaluation run via colab-mcp's `run_cell` against `notebooks/edsmith_training.ipynb`. The custom `training/mcp/server.py` and `mcp/client.py` are removed — no Cloudflare tunnel or URL registration needed.
 
 AoA reference: Brysbaert, M., Mandera, P., McCormick, S. F., & Keuleers, E. (2019). Word prevalence norms for 62,000 English lemmas. Behavior Research Methods, 51(2), 467–479.
