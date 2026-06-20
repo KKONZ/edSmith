@@ -159,14 +159,47 @@ def _linguistic_audit_sync(
 # Prompt construction
 # ---------------------------------------------------------------------------
 
-def _feedback_sample(feedback_df: pd.DataFrame, n: int = 6) -> str:
+def _feedback_sample(feedback_df: pd.DataFrame, n: int = 12) -> str:
+    """Sample individual feedback records sorted by largest score-band divergence.
+
+    Each record shows predicted score, reference band, delta, and confidence so
+    the Chief Examiner can identify specific mismatches between what the Examiner
+    decided and what the reference label says.
+    """
+    per_component = max(2, n // len(COMPONENT_HEADINGS))
     lines: list[str] = []
+
     for component in COMPONENT_HEADINGS:
-        subset = feedback_df[feedback_df["component"] == component].head(max(1, n // 4))
-        for _, row in subset.iterrows():
-            score = row.get("score", "?")
-            text = str(row.get("feedback_text", ""))[:300]
-            lines.append(f"[{component} | score={score}] {text}")
+        subset = feedback_df[feedback_df["component"] == component].copy()
+        if subset.empty:
+            continue
+
+        try:
+            scores = pd.to_numeric(subset["score"], errors="coerce")
+            bands = pd.to_numeric(subset["band"], errors="coerce")
+            subset = subset.assign(_delta=(scores - bands).abs())
+            subset = subset.sort_values("_delta", ascending=False)
+        except Exception:
+            pass
+
+        for _, row in subset.head(per_component).iterrows():
+            predicted = row.get("score", "?")
+            reference = row.get("band", "?")
+            tag = row.get("tag", "")
+            text = str(row.get("feedback_text", ""))[:400]
+
+            delta_str = ""
+            try:
+                delta = float(predicted) - float(reference)
+                delta_str = f" Δ={delta:+.1f}"
+            except (TypeError, ValueError):
+                pass
+
+            tag_str = f" confidence={tag}" if tag else ""
+            lines.append(
+                f"[{component} | predicted={predicted} reference={reference}{delta_str}{tag_str}]\n{text}"
+            )
+
     return "\n\n".join(lines)
 
 

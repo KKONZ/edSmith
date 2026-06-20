@@ -6,6 +6,7 @@ import pandas as pd
 import pytest
 
 from edsmith.chief_examiner.diagnostic import (
+    _feedback_sample,
     _load_iteration_history,
     _parse_response,
     run_diagnostic,
@@ -66,6 +67,67 @@ _STUB_DIAGNOSTIC = json.dumps({
 })
 
 _STUB_RESPONSE = f"<diagnostic>{_STUB_DIAGNOSTIC}</diagnostic>"
+
+
+# ---------------------------------------------------------------------------
+# _feedback_sample
+# ---------------------------------------------------------------------------
+
+_DIVERGENT_FEEDBACK = pd.DataFrame([
+    {
+        "question": "Q", "essay": f"Essay {i}",
+        "band": str(band), "component": c,
+        "feedback_text": label,
+        "score": score, "tag": tag,
+    }
+    for i, (c, band, score, label, tag) in enumerate([
+        ("task_response", 5.0, 8.0, "Outlier feedback task_response.", "low"),
+        ("task_response", 6.0, 6.0, "Normal feedback task_response.", "high"),
+        ("coherence",     5.0, 8.0, "Outlier feedback coherence.", "low"),
+        ("coherence",     6.0, 6.0, "Normal feedback coherence.", "high"),
+        ("lexical",       5.0, 8.0, "Outlier feedback lexical.", "low"),
+        ("lexical",       6.0, 6.0, "Normal feedback lexical.", "high"),
+        ("grammar",       5.0, 8.0, "Outlier feedback grammar.", "low"),
+        ("grammar",       6.0, 6.0, "Normal feedback grammar.", "high"),
+    ])
+])
+
+
+class TestFeedbackSample:
+    def test_includes_predicted_score(self):
+        result = _feedback_sample(_SMALL_FEEDBACK)
+        assert "predicted=" in result
+
+    def test_includes_reference_band(self):
+        result = _feedback_sample(_SMALL_FEEDBACK)
+        assert "reference=" in result
+
+    def test_includes_delta(self):
+        result = _feedback_sample(_SMALL_FEEDBACK)
+        assert "Δ=" in result
+
+    def test_includes_confidence_tag(self):
+        result = _feedback_sample(_SMALL_FEEDBACK)
+        assert "confidence=high" in result
+
+    def test_covers_all_four_components(self):
+        result = _feedback_sample(_SMALL_FEEDBACK)
+        for c in ["task_response", "coherence", "lexical", "grammar"]:
+            assert c in result
+
+    def test_outlier_sorted_before_normal(self):
+        result = _feedback_sample(_DIVERGENT_FEEDBACK)
+        assert result.index("Outlier") < result.index("Normal")
+
+    def test_handles_missing_band_gracefully(self):
+        df = _SMALL_FEEDBACK.copy()
+        df["band"] = None
+        result = _feedback_sample(df)
+        assert "predicted=" in result
+
+    def test_handles_empty_dataframe(self):
+        result = _feedback_sample(pd.DataFrame(columns=_SMALL_FEEDBACK.columns))
+        assert result == ""
 
 
 # ---------------------------------------------------------------------------
