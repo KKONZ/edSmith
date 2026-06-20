@@ -1,13 +1,15 @@
-# LangGraph for Session Orchestration, CrewAI for LLM-Council
+# MCP Tools and Claude Code for Session Orchestration
 
-The orchestration layer needs to handle an async training step (Colab GPU), stateful progression across iterations, and multi-agent composition for Feedback generation. Two frameworks were evaluated alongside a custom orchestration approach.
+The Session loop (examiner pass → train → evaluate → diagnose → human review → repeat) is orchestrated by Claude Code acting on `agents/edsmith.md`. All logic is implemented as MCP tools registered in the edSmith FastMCP server. No Python orchestration framework is used.
 
-We use LangGraph for the outer Session/Iteration loop and CrewAI for the LLM-Council within Phase 1.
+**Why Claude Code as orchestrator:** The loop is not a fixed graph — it involves judgment calls (is the ExaminerSummary healthy enough to proceed?), a human gate (approve/reject with critique), and conditional branching based on diagnostic output. Claude Code handles these naturally as conversation steps. A graph-based orchestrator would need to encode these branches as conditional edges and provide no benefit over a conversational agent that can reason about the same state.
 
-**Why LangGraph:** Its built-in checkpointing saves full graph state at each node. This directly solves the Colab lifecycle problem — the graph pauses after Phase 1 writes the augmented dataset to Google Drive, Colab runs fine-tuning and returns metrics, and the graph resumes exactly where it left off without custom state management. The conditional edge structure also maps naturally to the reflection escalation (simple → beam search → MCTS/LAST) as later iterations accumulate episodic memory.
+**Why MCP tools over Python agent classes:** Each domain operation (generate feedback, diagnose quality, approve a proposal) is a pure function from disk state to disk state. Expressing these as MCP tools makes them independently callable, testable as Python functions, and re-entrant — any tool can be re-run without replaying the full loop. Python agent classes that wrap the same logic add an abstraction layer with no operational benefit.
 
-**Why CrewAI for the council:** The Generator/Critic/Chair role pattern is a natural fit for CrewAI's crew abstraction. It runs as a subgraph called from within the LangGraph Phase 1 node and is bypassed entirely when LLM-Council is disabled.
+**Why session state on disk over in-memory graph checkpointing:** State is persisted to `{drive_path}/sessions/{session_id}/` as JSON and parquet files by each MCP tool. This means every step is resumable from a new conversation without any framework state being rebuilt. It also means the training step (which runs on a separate Colab GPU machine) writes directly to Drive and the local orchestrator reads from Drive — no IPC or serialisation protocol required.
 
-**Consequences:** Augmented datasets and the vector store are persisted to Google Drive between phases, as Google Drive is natively mountable in Colab without additional infrastructure.
+**Why single-pass Examiner over multi-role council:** A Generator → Critic → Chair pipeline adds per-essay latency (three sequential LLM calls) without a reliable signal that the additional calls improve Score calibration. The Chief Examiner performs the quality gate at the iteration level instead — one LLM call per iteration against all feedback at once, with full access to metrics and iteration history. This is a cheaper and more informed check than inlining a critic into every per-essay call.
 
-**Considered alternatives:** Pure LangGraph for everything (viable but verbose for the council role pattern), pure CrewAI (lacks checkpointing, poorly suited to the sequential stateful loop), custom orchestration (unnecessary complexity given both frameworks are maintained and well-documented).
+**Consequences:** Session resumability is free (read the latest files on disk). The human gate requires no polling — it is a natural pause in the Claude Code conversation. Adding new loop steps means adding a new MCP tool and updating `agents/edsmith.md`, not modifying a graph schema.
+
+**Considered alternative — keep a graph framework for the outer loop:** A graph would provide visual tooling and explicit state transitions but would require framework-specific serialisation, a separate process for the Colab training step, and a fixed branch structure that cannot adapt to the diagnostic output without code changes. The MCP + Claude Code approach is more flexible at equivalent complexity.
