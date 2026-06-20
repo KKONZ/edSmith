@@ -1,0 +1,85 @@
+{
+  "name": "Examiner",
+  "description": "Generates per-component IELTS Feedback and Scores for all training Essays in one iteration. Reads PromptPolicy and StrategyGuidance from SessionState on disk and writes a feedback parquet. Returns an ExaminerSummary.",
+  "url": "http://localhost:8000/a2a/examiner",
+  "provider": {
+    "organization": "edSmith",
+    "url": "https://github.com/kkonz/edSmith"
+  },
+  "version": "0.1.0",
+  "documentationUrl": "https://github.com/kkonz/edSmith/blob/main/agents/examiner.md",
+  "capabilities": {
+    "streaming": false,
+    "pushNotifications": false,
+    "stateTransitionHistory": false
+  },
+  "authentication": {
+    "schemes": ["None"]
+  },
+  "defaultInputModes": ["application/json"],
+  "defaultOutputModes": ["application/json"],
+  "skills": [
+    {
+      "id": "run_examiner_pass",
+      "name": "Run Examiner Pass",
+      "description": "Generate per-component Feedback for all training Essays in one iteration. On the first call for a session, downloads and splits the IELTS dataset. Returns an ExaminerSummary with score distributions, warning count, and the path to the written parquet.",
+      "tags": ["ielts", "feedback", "scoring", "examiner"],
+      "examples": [
+        "{\"session_id\": \"3fa85f64-5717-4562-b3fc-2c963f66afa6\", \"iteration\": 0}",
+        "{\"session_id\": \"3fa85f64-5717-4562-b3fc-2c963f66afa6\", \"iteration\": 1, \"concurrency\": 8}"
+      ],
+      "inputModes": ["application/json"],
+      "outputModes": ["application/json"],
+      "inputSchema": {
+        "type": "object",
+        "required": ["session_id", "iteration"],
+        "properties": {
+          "session_id": {
+            "type": "string",
+            "description": "UUID identifying the session. Must match an existing state.json on disk."
+          },
+          "iteration": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Iteration number. Determines the output parquet filename (feedback_iter{N}.parquet)."
+          },
+          "concurrency": {
+            "type": "integer",
+            "minimum": 1,
+            "default": 4,
+            "description": "Maximum simultaneous LLM calls. Default 4 is safe for standard OpenRouter rate limits."
+          }
+        }
+      },
+      "outputSchema": {
+        "type": "object",
+        "description": "ExaminerSummary",
+        "properties": {
+          "session_id": {"type": "string"},
+          "iteration": {"type": "integer"},
+          "essays_processed": {"type": "integer"},
+          "essays_total": {"type": "integer"},
+          "components_covered": {"type": "integer", "description": "Essays with all four components present."},
+          "score_distributions": {
+            "type": "object",
+            "description": "Per-component {mean, std, count} of predicted Scores.",
+            "additionalProperties": {
+              "type": "object",
+              "properties": {
+                "mean": {"type": "number"},
+                "std": {"type": "number"},
+                "count": {"type": "integer"}
+              }
+            }
+          },
+          "warnings": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": "One entry per essay that raised an exception during generation."
+          },
+          "parquet_path": {"type": "string", "description": "Absolute path to the written feedback parquet."}
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,129 @@
+{
+  "name": "Chief Examiner",
+  "description": "Diagnoses feedback quality from the Examiner pass and proposes targeted StrategyGuidance and PromptPolicy updates for the next iteration. Requires human approval before changes are applied to SessionState.",
+  "url": "http://localhost:8000/a2a/chief_examiner",
+  "provider": {
+    "organization": "edSmith",
+    "url": "https://github.com/kkonz/edSmith"
+  },
+  "version": "0.1.0",
+  "documentationUrl": "https://github.com/kkonz/edSmith/blob/main/agents/chief_examiner.md",
+  "capabilities": {
+    "streaming": false,
+    "pushNotifications": false,
+    "stateTransitionHistory": false
+  },
+  "authentication": {
+    "schemes": ["None"]
+  },
+  "defaultInputModes": ["application/json"],
+  "defaultOutputModes": ["application/json"],
+  "skills": [
+    {
+      "id": "run_chief_examiner",
+      "name": "Run Chief Examiner",
+      "description": "Diagnose feedback quality for one iteration. Reads the feedback parquet, evaluation metrics, and all prior iteration history from disk. Produces a DiagnosticReport and HumanReviewProposal saved to disk. Returns the proposal for human review. Optionally accepts a human critique from a prior rejected proposal to guide the revised diagnosis.",
+      "tags": ["ielts", "diagnostic", "reflection", "chief-examiner"],
+      "examples": [
+        "{\"session_id\": \"3fa85f64-5717-4562-b3fc-2c963f66afa6\", \"iteration\": 0}",
+        "{\"session_id\": \"3fa85f64-5717-4562-b3fc-2c963f66afa6\", \"iteration\": 1, \"critique\": \"Do not enable use_grammar — focus on policy changes for the coherence component only.\"}"
+      ],
+      "inputModes": ["application/json"],
+      "outputModes": ["application/json"],
+      "inputSchema": {
+        "type": "object",
+        "required": ["session_id", "iteration"],
+        "properties": {
+          "session_id": {"type": "string"},
+          "iteration": {"type": "integer", "minimum": 0},
+          "critique": {
+            "type": ["string", "null"],
+            "default": null,
+            "description": "Human critique from a prior rejected proposal. Included verbatim in the diagnostic prompt."
+          }
+        }
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "session_id": {"type": "string"},
+          "iteration": {"type": "integer"},
+          "status": {"type": "string", "enum": ["pending"]},
+          "diagnostic_summary": {"type": "string"},
+          "per_component_issues": {
+            "type": "object",
+            "additionalProperties": {"type": "string"}
+          },
+          "proposed_strategy": {"type": "object"},
+          "proposed_policies": {"type": "object"},
+          "proposal_path": {"type": "string"},
+          "error": {
+            "type": "string",
+            "description": "Present only when a required input file is missing. Check before calling approve/reject."
+          }
+        }
+      }
+    },
+    {
+      "id": "approve_proposal",
+      "name": "Approve Proposal",
+      "description": "Apply the Chief Examiner's proposed PromptPolicy and StrategyGuidance to SessionState and increment the iteration counter. Marks the proposal as approved on disk. Call after the human has reviewed and accepted the DiagnosticReport.",
+      "tags": ["ielts", "session", "approval"],
+      "examples": [
+        "{\"session_id\": \"3fa85f64-5717-4562-b3fc-2c963f66afa6\", \"iteration\": 0}"
+      ],
+      "inputModes": ["application/json"],
+      "outputModes": ["application/json"],
+      "inputSchema": {
+        "type": "object",
+        "required": ["session_id", "iteration"],
+        "properties": {
+          "session_id": {"type": "string"},
+          "iteration": {"type": "integer", "minimum": 0}
+        }
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "session_id": {"type": "string"},
+          "approved_iteration": {"type": "integer"},
+          "next_iteration": {"type": "integer"},
+          "updated_policies": {"type": "object"},
+          "updated_strategy": {"type": "object"}
+        }
+      }
+    },
+    {
+      "id": "reject_proposal",
+      "name": "Reject Proposal",
+      "description": "Mark the Chief Examiner's proposal as rejected and store the human's critique. SessionState is not modified. Re-run run_chief_examiner with the stored critique to obtain a revised proposal.",
+      "tags": ["ielts", "session", "rejection"],
+      "examples": [
+        "{\"session_id\": \"3fa85f64-5717-4562-b3fc-2c963f66afa6\", \"iteration\": 0, \"critique\": \"The proposed specificity increase for task_response is premature — leave it unchanged.\"}"
+      ],
+      "inputModes": ["application/json"],
+      "outputModes": ["application/json"],
+      "inputSchema": {
+        "type": "object",
+        "required": ["session_id", "iteration", "critique"],
+        "properties": {
+          "session_id": {"type": "string"},
+          "iteration": {"type": "integer", "minimum": 0},
+          "critique": {
+            "type": "string",
+            "description": "Human's objection to the proposal. Must be specific: name the component and change you disagree with."
+          }
+        }
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "session_id": {"type": "string"},
+          "rejected_iteration": {"type": "integer"},
+          "critique_stored": {"type": "string"},
+          "next_step": {"type": "string"}
+        }
+      }
+    }
+  ]
+}

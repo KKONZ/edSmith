@@ -150,11 +150,11 @@ src/edsmith/
 
 - ✅ **Commit 21:** Fill in `agents/chief_examiner.md` with full content: how to interpret a `DiagnosticReport`, when to propose strategy changes vs. prompt policy changes, how to handle a human rejection with critique, how to call `reject_proposal` and re-run.
 
-**Commit 22:** Fill in `agents/edsmith.md` with full orchestration content: the complete session loop step by step, which MCP server each tool lives on, how to connect to the Colab server, how to resume an interrupted session using `get_session_status`.
+- ✅ **Commit 22:** Fill in `agents/edsmith.md` with full orchestration content: the complete session loop step by step, which MCP server each tool lives on, how to connect to the Colab server, how to resume an interrupted session using `get_session_status`.
 
 ### Group I — A2A protocol (design + stub)
 
-**Commit 23:** Add `src/edsmith/a2a/` package with `cards/examiner.json` and `cards/chief_examiner.json` — fully-defined A2A agent card schemas. Add stub handlers in `src/edsmith/a2a/handlers.py`. Add `docs/adr/0014-a2a-protocol.md`.
+- ✅ **Commit 23:** Add `src/edsmith/a2a/` package with `cards/examiner.json` and `cards/chief_examiner.json` — fully-defined A2A agent card schemas. Add stub handlers in `src/edsmith/a2a/handlers.py`. Add `docs/adr/0014-a2a-protocol.md`.
 
 ### Group J — ADR updates
 
