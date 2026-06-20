@@ -30,7 +30,8 @@ dev = ["pytest>=8.0"]
 training = ["coral-pytorch>=1.4", "transformers>=4.40"]  # install only in Colab GPU environment
 
 [tool.hatch.build.targets.wheel]
-packages = ["edsmith"]
+packages = ["src/edsmith"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["src"]
