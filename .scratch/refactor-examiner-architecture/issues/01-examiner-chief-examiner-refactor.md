@@ -148,7 +148,7 @@ src/edsmith/
 
 - ✅ **Commit 20:** Fill in `agents/examiner.md` with full content: purpose, available MCP tools and their signatures, what `StrategyGuidance` fields mean, how to interpret the feedback summary returned by `run_examiner_pass`.
 
-**Commit 21:** Fill in `agents/chief_examiner.md` with full content: how to interpret a `DiagnosticReport`, when to propose strategy changes vs. prompt policy changes, how to handle a human rejection with critique, how to call `reject_proposal` and re-run.
+- ✅ **Commit 21:** Fill in `agents/chief_examiner.md` with full content: how to interpret a `DiagnosticReport`, when to propose strategy changes vs. prompt policy changes, how to handle a human rejection with critique, how to call `reject_proposal` and re-run.
 
 **Commit 22:** Fill in `agents/edsmith.md` with full orchestration content: the complete session loop step by step, which MCP server each tool lives on, how to connect to the Colab server, how to resume an interrupted session using `get_session_status`.
 
