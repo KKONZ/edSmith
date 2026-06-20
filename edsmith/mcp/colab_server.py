@@ -28,7 +28,7 @@ Setup in Colab (two cells):
 --- Cell 2: start server (blocking) ---
     import unsloth  # must be first — patches transformers before any other import
     import threading
-    from edsmith.mcp.server import mcp
+    from edsmith.mcp.colab_server import mcp
 
     t = threading.Thread(target=mcp.run, kwargs={"transport": "http", "port": 8000}, daemon=True)
     t.start()
