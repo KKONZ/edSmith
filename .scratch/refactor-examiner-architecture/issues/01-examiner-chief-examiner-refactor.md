@@ -90,7 +90,7 @@ src/edsmith/
 
 ### Group C — Session state on disk
 
-**Commit 6:** Add `src/edsmith/session/state.py`. `SessionState` is a Pydantic model with fields: `session_id`, `iteration`, `policies: dict[str, PromptPolicy]`, `strategy_guidance: StrategyGuidance`, `model_path: str | None`, `parent_session_id: str | None`. Add `load_state` / `save_state` helpers persisting to `{drive_path}/sessions/{session_id}/state.json`.
+- ✅ **Commit 6:** Add `src/edsmith/session/state.py`. `SessionState` is a Pydantic model with fields: `session_id`, `iteration`, `policies: dict[str, PromptPolicy]`, `strategy_guidance: StrategyGuidance`, `model_path: str | None`, `parent_session_id: str | None`. Add `load_state` / `save_state` helpers persisting to `{drive_path}/sessions/{session_id}/state.json`.
 
 **Commit 7:** Add `StrategyGuidance` and `DiagnosticReport` Pydantic models to `src/edsmith/config/session.py`. Add `HumanReviewProposal` persisted as `{drive_path}/sessions/{session_id}/proposals/iter{n}.json`. Remove `CouncilConfig` from `SessionConfig`. Add `human_in_the_loop: bool = False` field (no-op for now; used later by the MCP server to decide whether to auto-approve).
 
