@@ -82,7 +82,7 @@ src/edsmith/
 
 ### Group B — Move to src/ layout and domain structure
 
-**Commit 3:** Unstage partial rename from interrupted Commit 3 attempt. Move entire `edsmith/` → `src/edsmith/` using `git mv`. Update `pyproject.toml`: change `packages = ["edsmith"]` to `packages = ["src/edsmith"]` (hatchling src layout). Update `[tool.pytest.ini_options]` to add `pythonpath = ["src"]` so tests resolve the package. Confirm `pytest` passes with same baseline (2 pre-existing failures, 77 passing).
+- ✅ **Commit 3:** Unstage partial rename from interrupted Commit 3 attempt. Move entire `edsmith/` → `src/edsmith/` using `git mv`. Update `pyproject.toml`: change `packages = ["edsmith"]` to `packages = ["src/edsmith"]` (hatchling src layout). Update `[tool.pytest.ini_options]` to add `pythonpath = ["src"]` so tests resolve the package. Confirm `pytest` passes with same baseline (2 pre-existing failures, 77 passing).
 
 **Commit 4:** Create domain subpackages inside `src/edsmith/`. Move Colab server: `src/edsmith/mcp/server.py` → `src/edsmith/training/mcp/server.py`. Update the Colab setup docstring import reference. Add empty `__init__.py` files for: `src/edsmith/examiner/`, `src/edsmith/examiner/mcp/`, `src/edsmith/chief_examiner/`, `src/edsmith/chief_examiner/mcp/`, `src/edsmith/training/`, `src/edsmith/tools/`, `src/edsmith/tools/mcp/`, `src/edsmith/session/`. Add `src/edsmith/mcp/__main__.py` stub (empty FastMCP server named `edsmith`). Confirm `pytest` passes.
 
