@@ -20,6 +20,15 @@ class PromptPolicy(BaseModel):
     additional_instructions: str = ""
 
 
+class StrategyGuidance(BaseModel):
+    """Higher-level strategic direction from Chief Examiner to Examiner."""
+    per_component_focus: dict[str, str] = Field(default_factory=dict)
+    use_aoa: bool = False
+    use_grammar: bool = False
+    use_complexity: bool = False
+    contrastive_anchoring: bool = False
+
+
 class CouncilConfig(BaseModel):
     enabled: bool = False
     critic_rounds: int = 1

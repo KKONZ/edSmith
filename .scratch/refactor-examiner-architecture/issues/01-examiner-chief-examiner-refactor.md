@@ -86,7 +86,7 @@ src/edsmith/
 
 - ✅ **Commit 4:** Create domain subpackages inside `src/edsmith/`. Move Colab server: `src/edsmith/mcp/server.py` → `src/edsmith/training/mcp/server.py`. Update the Colab setup docstring import reference. Add empty `__init__.py` files for: `src/edsmith/examiner/`, `src/edsmith/examiner/mcp/`, `src/edsmith/chief_examiner/`, `src/edsmith/chief_examiner/mcp/`, `src/edsmith/training/`, `src/edsmith/tools/`, `src/edsmith/tools/mcp/`, `src/edsmith/session/`. Add `src/edsmith/mcp/__main__.py` stub (empty FastMCP server named `edsmith`). Confirm `pytest` passes.
 
-**Commit 5:** Add `docs/adr/0009-rocketsmith-pattern.md` — documents the architectural inversion (MCP tools + Claude Code orchestration), the `src/` layout choice, the domain subpackage pattern, and the removal of LangGraph and Python agent classes.
+- ✅ **Commit 5:** Add `docs/adr/0009-rocketsmith-pattern.md` — documents the architectural inversion (MCP tools + Claude Code orchestration), the `src/` layout choice, the domain subpackage pattern, and the removal of LangGraph and Python agent classes.
 
 ### Group C — Session state on disk
 
