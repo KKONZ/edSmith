@@ -18,6 +18,18 @@ class SessionState(BaseModel):
     parent_session_id: str | None = None
 
 
+class SessionMetrics(BaseModel):
+    """Evaluation metrics for one iteration, persisted after evaluate_scorer returns.
+
+    test metrics are aggregated summaries only — no individual test records
+    are stored here (ADR 0006).
+    """
+    session_id: str
+    iteration: int
+    val: dict[str, float]
+    test: dict[str, float]
+
+
 def _state_path(drive_path: Path, session_id: str) -> Path:
     return drive_path / "sessions" / session_id / "state.json"
 
@@ -32,6 +44,22 @@ def save_state(state: SessionState, drive_path: Path) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(state.model_dump_json(indent=2))
     return path
+
+
+def _metrics_path(drive_path: Path, session_id: str, iteration: int) -> Path:
+    return drive_path / "sessions" / session_id / f"metrics_iter{iteration}.json"
+
+
+def save_metrics(metrics: SessionMetrics, drive_path: Path) -> Path:
+    path = _metrics_path(drive_path, metrics.session_id, metrics.iteration)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(metrics.model_dump_json(indent=2))
+    return path
+
+
+def load_metrics(drive_path: Path, session_id: str, iteration: int) -> SessionMetrics:
+    path = _metrics_path(drive_path, session_id, iteration)
+    return SessionMetrics.model_validate_json(path.read_text())
 
 
 def _proposal_path(drive_path: Path, session_id: str, iteration: int) -> Path:

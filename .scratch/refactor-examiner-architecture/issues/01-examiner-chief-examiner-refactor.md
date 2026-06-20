@@ -116,11 +116,19 @@ src/edsmith/
 
 ### Group F — Chief Examiner domain
 
-**Commit 16:** Add `src/edsmith/chief_examiner/diagnostic.py`. Contains diagnostic and reflection logic previously in `ReflectionAgent` — upgraded to receive the training feedback DataFrame, call linguistic tools to audit feedback quality, and produce a `DiagnosticReport` before proposing `StrategyGuidance` updates. Preserves MCTS/beam/simple mode selection and UCB1 scoring.
+- ✅ **Commit 16:** Add `src/edsmith/chief_examiner/diagnostic.py`. `run_diagnostic` produces `(DiagnosticReport, HumanReviewProposal)`. Mode selection: simple/beam/mcts based on episodic tree size and sibling count. UCB1 scoring (`_ucb1`) for MCTS candidate ranking. Linguistic audit via `asyncio.to_thread` on sampled essays (grammar/aoa/complexity/discourse). LLM uses `model_config.chair`; response parsed from `<diagnostic>` JSON tag. Policy and strategy proposals merged onto current values (unknown fields silently ignored). Test set purity enforced — only `test_metrics_summary` dict passed, never individual test records.
+
+### Group F.5 — Episodic context wiring
+
+**Design decision:** The MCTS/beam/simple mode selection and UCB1 formula in Commit 16 were inherited from the old autonomous orchestrator. In the new architecture Claude Code + the human IS the search strategy — rigid mode selection is unnecessary. The Chief Examiner needs rich history context (what was tried, what the human said, what happened to metrics) not an algorithm. The EpisodicMemory markdown files are retained for the `show-tree` CLI and tree visualisation but are no longer the primary history source for the diagnostic.
+
+- ✅ **Commit 16a:** Add `SessionMetrics` Pydantic model (session_id, iteration, val, test dicts) and `save_metrics` / `load_metrics` helpers to `src/edsmith/session/state.py`. Persists to `{drive_path}/sessions/{session_id}/metrics_iter{n}.json`. Add `tests/test_session_state.py` (12 tests) covering round-trips for SessionState, SessionMetrics (incl. file location and multi-iteration independence), and HumanReviewProposal (incl. status mutation and critique persistence).
+
+**Commit 16b:** Rewrite `run_diagnostic` in `src/edsmith/chief_examiner/diagnostic.py`. Replace `_select_mode` / UCB1 context with a rich iteration history built from prior `proposals/iter{n}.json` and `metrics_iter{n}.json` files: *"Iteration N: proposed [strategy/policy changes], human [approved|rejected: critique], val accuracy went from A → B."* Remove `_ucb1`, `_select_mode`, and the `EpisodicMemory` parameter from the function signature. Episodic tree structure (branching, depth) is available via `SessionState.parent_session_id` if needed. Update `run_diagnostic` signature to accept `drive_path: Path` directly instead of `episodic_memory`.
 
 **Commit 17:** Add `src/edsmith/chief_examiner/mcp/tools.py`. Three tools: `run_chief_examiner(session_id, iteration)` reads feedback parquet + metrics + policies, produces `DiagnosticReport` + `HumanReviewProposal`, saves both to disk, returns proposal JSON. `approve_proposal(session_id, iteration)` applies proposed policies and strategy to `SessionState`. `reject_proposal(session_id, iteration, critique)` stores critique and marks proposal rejected. Register all three in `src/edsmith/mcp/__main__.py`.
 
-**Commit 18:** Add `tests/chief_examiner/test_diagnostic.py`. Test via `StubProvider` + small mock feedback DataFrame: `DiagnosticReport` correctly parsed; policy updates merge correctly; unknown fields ignored; UCB1 mode selection logic unchanged.
+**Commit 18:** Add `tests/chief_examiner/test_diagnostic.py`. Test via `StubProvider` + small mock feedback DataFrame + temporary session directory with pre-written metrics and proposal files: `DiagnosticReport` correctly parsed; policy updates merge correctly; unknown fields ignored; history context includes prior iteration summaries; history empty on first iteration.
 
 ### Group G — CLI and top-level server
 
