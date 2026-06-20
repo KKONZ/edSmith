@@ -28,6 +28,7 @@ edsmith = "edsmith.cli:app"
 [project.optional-dependencies]
 dev = ["pytest>=8.0"]
 training = ["coral-pytorch>=1.4", "transformers>=4.40"]  # install only in Colab GPU environment
+tools = ["language-tool-python>=2.7"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/edsmith"]
