@@ -34,7 +34,7 @@ class TestDiscourseAnalysis:
         result = discourse_analysis(_ESSAY)
         detail = result["details"][0]
         for key in ("index", "role", "sentence_count", "transitions",
-                    "pronoun_count", "repetition_rate",
+                    "connective_tokens", "pronoun_count", "repetition_rate",
                     "has_intro_marker", "has_conclusion_marker"):
             assert key in detail
 
@@ -46,30 +46,48 @@ class TestDiscourseAnalysis:
         result = discourse_analysis(_ESSAY)
         assert result["details"][-1]["has_conclusion_marker"] is True
 
-    def test_transition_words_found(self):
+    def test_wordlist_transitions_found(self):
         result = discourse_analysis(_ESSAY)
-        assert result["stats"]["total_transitions"] > 0
+        assert result["stats"]["total_transitions_wordlist"] > 0
 
-    def test_adversative_transitions(self):
+    def test_pos_connectives_found(self):
         result = discourse_analysis(_ESSAY)
-        assert result["stats"]["transitions_adversative"] > 0
+        assert result["stats"]["total_connectives_pos"] > 0
 
-    def test_exemplification_transitions(self):
+    def test_wordlist_coverage_ratio_present(self):
         result = discourse_analysis(_ESSAY)
-        assert result["stats"]["transitions_exemplification"] > 0
+        ratio = result["stats"]["wordlist_coverage_ratio"]
+        assert 0.0 <= ratio <= 1.0
+
+    def test_connective_tokens_shape(self):
+        result = discourse_analysis(_ESSAY)
+        all_connectives = [c for d in result["details"] for c in d["connective_tokens"]]
+        assert len(all_connectives) > 0
+        for c in all_connectives:
+            assert "word" in c
+            assert "pos" in c
+            assert "in_wordlist" in c
+            assert c["pos"] in ("SCONJ", "CCONJ")
+
+    def test_known_wordlist_word_marked_covered(self):
+        result = discourse_analysis("However, this is not the case. Although it seems so.")
+        all_connectives = [c for d in result["details"] for c in d["connective_tokens"]]
+        covered = {c["word"] for c in all_connectives if c["in_wordlist"]}
+        assert len(covered) > 0
 
     def test_stats_keys(self):
         result = discourse_analysis(_ESSAY)
-        for key in ("paragraph_count", "total_transitions", "pronoun_ratio",
-                    "lexical_repetition_rate", "has_introduction_marker",
-                    "has_conclusion_marker"):
+        for key in ("paragraph_count", "total_transitions_wordlist", "total_connectives_pos",
+                    "wordlist_coverage_ratio", "pronoun_ratio", "lexical_repetition_rate"):
             assert key in result["stats"]
 
     def test_repetition_higher_for_repetitive_text(self):
-        repetitive = "The cat is good. The cat is nice.\n\nThe cat is great. The cat is fine."
-        varied = "The cat sat quietly.\n\nShe explored the garden with curiosity."
-        rep = discourse_analysis(repetitive)["stats"]["lexical_repetition_rate"]
-        var = discourse_analysis(varied)["stats"]["lexical_repetition_rate"]
+        rep = discourse_analysis(
+            "The cat is good. The cat is nice.\n\nThe cat is great. The cat is fine."
+        )["stats"]["lexical_repetition_rate"]
+        var = discourse_analysis(
+            "The cat sat quietly.\n\nShe explored the garden with curiosity."
+        )["stats"]["lexical_repetition_rate"]
         assert rep > var
 
     def test_empty_string(self):
