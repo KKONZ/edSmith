@@ -108,9 +108,9 @@ src/edsmith/
 
 ### Group E — Examiner domain
 
-**Commit 13:** Add `src/edsmith/examiner/feedback.py`. Contains the core feedback generation logic previously split across `CouncilAgent` and `FeedbackAgent` — simplified to a single tool-augmented LLM call per component. Uses `asyncio.gather` for concurrency across components. Accepts `StrategyGuidance` and calls linguistic tools when flagged. Preserves `ComponentFeedback` output shape and `_extract_score` / `_extract_tag` parsing helpers.
+- ✅ **Commit 13:** Add `src/edsmith/examiner/feedback.py`. `ComponentFeedback` dataclass (component, feedback, score, tag). `_extract_score` / `_extract_tag` parsing helpers. `generate_feedback` runs all four components concurrently via `asyncio.gather`; linguistic tools collected once via `asyncio.to_thread` before launch. Accepts `StrategyGuidance` (use_grammar/aoa/complexity/discourse/contrastive_anchoring, per_component_focus). Added `use_discourse: bool = False` to `StrategyGuidance`.
 
-**Commit 14:** Add `src/edsmith/examiner/mcp/tools.py`. `run_examiner_pass(session_id, iteration)` reads `SessionState` from disk, loads the training DataFrame, generates feedback for all essays concurrently, writes the feedback parquet, and returns a summary dict. Register in `src/edsmith/mcp/__main__.py`.
+- ✅ **Commit 14:** Add `src/edsmith/examiner/mcp/tools.py`. `register_examiner_pass(app)` — `run_examiner_pass(session_id, iteration, concurrency=4)` reads `SessionState`, lazy-initialises session data parquets on first call (train/val/test splits saved to `{drive_path}/sessions/{session_id}/data/`), runs `generate_feedback` concurrently with a semaphore, writes `feedback_iter{n}.parquet`, returns `ExaminerSummary`. Drive path from `EDSMITH_DRIVE_PATH` env var (default Colab path). Registered in `src/edsmith/mcp/__main__.py`.
 
 **Commit 15:** Add `tests/examiner/test_feedback.py`. Test via `StubProvider`: output has correct four components; `StrategyGuidance` is accepted; parsing helpers handle edge cases. Test `run_examiner_pass` tool function directly (not via HTTP) with a temporary session directory.
 

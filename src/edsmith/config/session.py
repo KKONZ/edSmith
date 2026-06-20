@@ -26,6 +26,7 @@ class StrategyGuidance(BaseModel):
     use_aoa: bool = False
     use_grammar: bool = False
     use_complexity: bool = False
+    use_discourse: bool = False
     contrastive_anchoring: bool = False
 
 
