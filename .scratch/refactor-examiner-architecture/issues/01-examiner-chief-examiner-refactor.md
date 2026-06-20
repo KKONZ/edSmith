@@ -102,7 +102,7 @@ src/edsmith/
 
 - ✅ **Commit 10:** Add `src/edsmith/tools/complexity.py` using `spacy`. Write unit tests in `tests/tools/test_complexity.py`.
 
-**Commit 11:** Add `src/edsmith/tools/aoa.py` stub. Interface: `compute_aoa_stats(text: str) -> ToolResult`. Data loading stubbed with `TODO` pointing to Brysbaert et al. (2019). Write `tests/tools/test_aoa.py` verifying the stub returns a correctly-shaped `ToolResult`.
+- ✅ **Commit 11:** Add `src/edsmith/tools/aoa.py` using StephanAkkerman/English-Age-of-Acquisition (HuggingFace). Data stored locally as `src/edsmith/tools/data/aoa.parquet` (31k words, fields: word, aoa, freq_pm, pos, nletters, nphon, nsyll, perc_known). Grammar and complexity tools enriched with per-error/per-sentence AoA cross-reference. `ToolResult` updated with `stats: dict[str, float]` for aggregate statistics (mean, std, kurtosis, skew, etc.). spaCy loaded via shared `_spacy.py` singleton with `ner` disabled. Add `src/edsmith/tools/discourse.py`: paragraph segmentation, intro/body/conclusion role detection, transition word lexicon by category (additive/adversative/causal/sequential/exemplification/conclusion), substitution signals (pronoun ratio, cross-paragraph lexical repetition rate). Complexity updated with passive ratio, subordinate clause ratio, nominalization ratio. Write `tests/tools/test_aoa.py` (8 tests, no skip), `tests/tools/test_discourse.py` (12 tests, skip without spaCy).
 
 **Commit 12:** Add `src/edsmith/tools/mcp/tools.py` — MCP tools `grammar_check`, `aoa_stats`, `complexity_stats` wrapping the domain modules. Register them in `src/edsmith/mcp/__main__.py`. Update `pyproject.toml` with `language_tool_python` and `spacy` as optional `[tools]` extras. Add `docs/adr/0012-linguistic-feature-tools.md`.
 
