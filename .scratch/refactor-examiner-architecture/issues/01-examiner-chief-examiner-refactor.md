@@ -22,7 +22,7 @@ Move all agent logic into MCP tools. Remove the Python agent classes and the Pyt
 agents/                  ← markdown agent definitions for Claude Code
   examiner.md            ← how to use the examiner tools
   chief_examiner.md      ← how to run diagnostic and reflection
-  session.md             ← how to drive a full session loop
+  edsmith.md             ← how to drive a full session loop
 edsmith/                 ← Python library, all exposed as MCP tools
   config/
   data/
@@ -69,7 +69,7 @@ edsmith/                 ← Python library, all exposed as MCP tools
 
 **Commit 1:** Delete `edsmith/orchestrator.py`. Delete `edsmith/agents/` directory (all subdirectories). Remove `langgraph` from `pyproject.toml`. Confirm `pytest` still passes (tests that tested agent classes will need updating — those come in later commits).
 
-**Commit 2:** Add root-level `agents/` directory with stub markdown files: `examiner.md`, `chief_examiner.md`, `session.md`. Each file has a heading and a one-line placeholder description. No content yet.
+**Commit 2:** Add root-level `agents/` directory with stub markdown files: `edsmith.md`, `examiner.md`, `chief_examiner.md`. Each file has a heading and a one-line placeholder description. No content yet.
 
 **Commit 3:** Rename `edsmith/mcp/server.py` → `edsmith/mcp/colab_server.py`. Update all references (CLI, README, CLAUDE.md). This clarifies that the existing server is Colab-only and makes room for the new local server.
 
@@ -113,7 +113,7 @@ edsmith/                 ← Python library, all exposed as MCP tools
 
 **Commit 20:** Update `agents/chief_examiner.md` with full content: how to run diagnostics, how to interpret a DiagnosticReport, when to propose strategy changes vs. prompt policy changes, how to handle a human rejection.
 
-**Commit 21:** Update `agents/session.md` with full content: the complete session loop (initialize → examiner pass → train → evaluate → chief examiner → human gate → repeat), how to connect to the Colab MCP server, how to resume an interrupted session.
+**Commit 21:** Update `agents/edsmith.md` with full content: the complete session loop (initialize → examiner pass → train → evaluate → chief examiner → human gate → repeat), how to connect to the Colab MCP server, how to resume an interrupted session.
 
 **Commit 22:** Delete all tests that tested the now-removed `CouncilAgent`, `FeedbackAgent`, and `ReflectionAgent` Python classes. Add tests for the new MCP tool functions (called directly, not via HTTP): `run_examiner_pass`, `run_chief_examiner`, `approve_proposal` / `reject_proposal`. Use `StubProvider` from `conftest.py`.
 
