@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 
 import yaml
 from pydantic import BaseModel, Field, model_validator
@@ -29,10 +29,25 @@ class StrategyGuidance(BaseModel):
     contrastive_anchoring: bool = False
 
 
-class CouncilConfig(BaseModel):
-    enabled: bool = False
-    critic_rounds: int = 1
-    chair_memory_injection: bool = False
+class DiagnosticReport(BaseModel):
+    """Chief Examiner's analysis of feedback quality against training data."""
+    session_id: str
+    iteration: int
+    summary: str = ""
+    per_component_issues: dict[str, str] = Field(default_factory=dict)
+    metric_summary: dict[str, float] = Field(default_factory=dict)
+    linguistic_findings: dict[str, Any] = Field(default_factory=dict)
+
+
+class HumanReviewProposal(BaseModel):
+    """Proposal surfaced to the human after Chief Examiner diagnostic."""
+    session_id: str
+    iteration: int
+    diagnostic_report: DiagnosticReport
+    proposed_strategy: StrategyGuidance = Field(default_factory=StrategyGuidance)
+    proposed_policies: dict[str, PromptPolicy] = Field(default_factory=dict)
+    status: Literal["pending", "approved", "rejected"] = "pending"
+    critique: str | None = None
 
 
 class SamplingConfig(BaseModel):
@@ -84,8 +99,8 @@ class SessionConfig(BaseModel):
     k: Annotated[int, Field(ge=1)] = 4  # few-shot examples retrieved from semantic memory
     phase1_concurrency: Annotated[int, Field(ge=1)] = 4  # max concurrent essays in Phase 1
 
+    human_in_the_loop: bool = False
     models: ModelConfig = Field(default_factory=ModelConfig)
-    council: CouncilConfig = Field(default_factory=CouncilConfig)
     sampling: SamplingConfig = Field(default_factory=SamplingConfig)
     scorer: ScorerConfig = Field(default_factory=ScorerConfig)
     memory: MemoryConfig = Field(default_factory=MemoryConfig)

@@ -6,7 +6,7 @@ from pathlib import Path
 
 from pydantic import BaseModel, Field
 
-from edsmith.config.session import PromptPolicy, StrategyGuidance
+from edsmith.config.session import HumanReviewProposal, PromptPolicy, StrategyGuidance
 
 
 class SessionState(BaseModel):
@@ -31,4 +31,20 @@ def save_state(state: SessionState, drive_path: Path) -> Path:
     path = _state_path(drive_path, state.session_id)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(state.model_dump_json(indent=2))
+    return path
+
+
+def _proposal_path(drive_path: Path, session_id: str, iteration: int) -> Path:
+    return drive_path / "sessions" / session_id / "proposals" / f"iter{iteration}.json"
+
+
+def load_proposal(drive_path: Path, session_id: str, iteration: int) -> HumanReviewProposal:
+    path = _proposal_path(drive_path, session_id, iteration)
+    return HumanReviewProposal.model_validate_json(path.read_text())
+
+
+def save_proposal(proposal: HumanReviewProposal, drive_path: Path) -> Path:
+    path = _proposal_path(drive_path, proposal.session_id, proposal.iteration)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(proposal.model_dump_json(indent=2))
     return path
