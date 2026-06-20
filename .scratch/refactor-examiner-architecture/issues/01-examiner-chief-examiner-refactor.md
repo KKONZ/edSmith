@@ -100,7 +100,7 @@ src/edsmith/
 
 - ✅ **Commit 9:** Add `src/edsmith/tools/grammar.py` using `language_tool_python`. `ToolResult` TypedDict in `src/edsmith/tools/__init__.py`. Write unit tests in `tests/tools/test_grammar.py` against real text strings.
 
-**Commit 10:** Add `src/edsmith/tools/complexity.py` using `spacy`. Write unit tests in `tests/tools/test_complexity.py`.
+- ✅ **Commit 10:** Add `src/edsmith/tools/complexity.py` using `spacy`. Write unit tests in `tests/tools/test_complexity.py`.
 
 **Commit 11:** Add `src/edsmith/tools/aoa.py` stub. Interface: `compute_aoa_stats(text: str) -> ToolResult`. Data loading stubbed with `TODO` pointing to Brysbaert et al. (2019). Write `tests/tools/test_aoa.py` verifying the stub returns a correctly-shaped `ToolResult`.
 
