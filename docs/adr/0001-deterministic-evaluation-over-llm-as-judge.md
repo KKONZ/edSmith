@@ -1,6 +1,6 @@
 # Deterministic Tool-Based Evaluation Over LLM-as-Judge
 
-The reflection stage needs a signal to judge whether changes to Feedback generation (council configuration, prompts, long-term memory) improved outcomes. We evaluated two approaches: LLM-as-judge (an LLM rates Feedback quality) and deterministic metrics computed against a held-out test set.
+The Chief Examiner needs a signal to judge whether changes to Feedback generation (Prompt Policies, Strategy Guidance) improved outcomes. We evaluated two approaches: LLM-as-judge (an LLM rates Feedback quality) and deterministic metrics computed against a held-out test set.
 
 We use deterministic metrics — accuracy, adjacent accuracy, quadratic weighted kappa (QWK), and standardized mean difference (SMD) — computed via tool calls against a held-out test set. Training uses a small number of steps per turn (via Unsloth sequence classification) rather than full fine-tuning.
 

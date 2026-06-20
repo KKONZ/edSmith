@@ -1,9 +1,9 @@
-# Data Availability Triggers Reflection Mode Escalation
+# Chief Examiner Runs After Every Iteration
 
-The reflection stage escalates through three modes across iterations: simple reflection, beam search, and MCTS/LAST. The question is what triggers each transition.
+The Chief Examiner runs after every Scorer evaluation, unconditionally. It is not triggered by performance thresholds, not skipped when metrics improve, and not bypassed after the first iteration.
 
-Transitions are triggered by the number of episodic memory records available in the search tree, not by a fixed iteration schedule or performance plateau.
+**Why:** Every iteration produces new Feedback data and new Scorer performance numbers. The Chief Examiner uses both to produce a targeted proposal. Skipping a diagnostic pass because metrics improved would discard information about why they improved — which matters for avoiding regression in the next iteration. A fixed-threshold trigger would require per-dataset tuning and would activate late when the training sample is small and metrics are noisy.
 
-**Why:** Beam search requires sibling sessions (same parent, same tree depth) to compare — without them, there is nothing to search across. MCTS/LAST requires a populated tree to make UCB1 scoring meaningful. A fixed schedule risks activating advanced search before sufficient data exists, producing degenerate results. A performance plateau is a valid signal but adds complexity and may trigger prematurely due to noisy metrics on small samples.
+**How it works:** After Cell 3 writes `metrics_iter{N}.json`, the orchestrating agent calls `run_chief_examiner`. The Chief Examiner receives the full iteration history (all prior approved proposals and their metrics) plus a sample of the current training Feedback sorted by score-band divergence. It produces a `DiagnosticReport` and `HumanReviewProposal`. The human approves or rejects. If rejected, the critique is stored and the Chief Examiner is called again in the same iteration with the critique injected. There is no skip condition and no minimum data threshold.
 
-**How it works:** The orchestrator checks the episodic memory tree before choosing a reflection mode. Beam search activates when at least two sibling sessions exist at the current depth. MCTS/LAST activates when the tree contains sufficient nodes for UCB1 to discriminate between branches. Both thresholds are configurable by the human operator at Session start.
+**Considered alternative — trigger only when validation accuracy declines:** Rejected because improving accuracy can still mask deteriorating diagnostic patterns (over-prediction creeping up, one component improving at the expense of another). The cost of the Chief Examiner call is negligible relative to the GPU training step, so there is no reason to skip it.

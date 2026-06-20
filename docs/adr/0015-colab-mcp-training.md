@@ -6,13 +6,13 @@ Accepted
 
 ## Context
 
-Scorer training and evaluation (Qwen3 + LoRA + CORN loss) requires a Colab GPU runtime. Claude Code needs a way to trigger training and evaluation cells and retrieve results without manual URL management.
+Scorer training and evaluation (Qwen3 + LoRA + CORN loss) requires a Colab GPU runtime. The session orchestrator needs a way to trigger training and evaluation cells and retrieve results without manual URL management.
 
 ## Decision
 
-Use `googlecolab/colab-mcp`. It runs locally and bridges to an open Colab browser session, exposing `run_cell` and `add_cell` tools. Claude Code calls `run_cell` to execute cells in `notebooks/edsmith_training.ipynb` on the Colab GPU.
+Use `googlecolab/colab-mcp`. It runs locally and bridges to an open Colab browser session, exposing `run_cell` and `add_cell` tools. The orchestrating agent calls `run_cell` to execute cells in `notebooks/edsmith_training.ipynb` on the Colab GPU.
 
-Training and evaluation logic lives in `training/scorer.py`, exposing `train(session_id, iteration, drive_path)` and `evaluate(session_id, iteration, split, drive_path)`. Notebook cells call these functions; Claude Code prepends variable assignment (`SESSION_ID`, `ITERATION`, `SPLIT`) before calling `run_cell`.
+Training and evaluation logic lives in `training/scorer.py`, exposing `train(session_id, iteration, drive_path)` and `evaluate(session_id, iteration, split, drive_path)`. Notebook cells call these functions; the orchestrating agent prepends variable assignment (`SESSION_ID`, `ITERATION`) before calling `run_cell`.
 
 `colab-mcp` is installed via `uvx git+https://github.com/googlecolab/colab-mcp` and connected as an MCP server when running a session.
 

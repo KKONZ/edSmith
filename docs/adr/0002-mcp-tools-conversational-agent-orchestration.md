@@ -1,8 +1,8 @@
-# MCP Tools and Claude Code for Session Orchestration
+# MCP Tools and Conversational Agent Orchestration
 
-The Session loop (examiner pass → train → evaluate → diagnose → human review → repeat) is orchestrated by Claude Code acting on `agents/edsmith.md`. All logic is implemented as MCP tools registered in the edSmith FastMCP server. No Python orchestration framework is used.
+The Session loop (examiner pass → train → evaluate → diagnose → human review → repeat) is orchestrated by an AI agent acting on `agents/edsmith.md`. All logic is implemented as MCP tools registered in the edSmith FastMCP server. No Python orchestration framework is used.
 
-**Why Claude Code as orchestrator:** The loop is not a fixed graph — it involves judgment calls (is the ExaminerSummary healthy enough to proceed?), a human gate (approve/reject with critique), and conditional branching based on diagnostic output. Claude Code handles these naturally as conversation steps. A graph-based orchestrator would need to encode these branches as conditional edges and provide no benefit over a conversational agent that can reason about the same state.
+**Why a conversational agent as orchestrator:** The loop is not a fixed graph — it involves judgment calls (is the ExaminerSummary healthy enough to proceed?), a human gate (approve/reject with critique), and conditional branching based on diagnostic output. A conversational AI agent handles these naturally as conversation steps. A graph-based orchestrator would need to encode these branches as conditional edges and provide no benefit over an agent that can reason about the same state.
 
 **Why MCP tools over Python agent classes:** Each domain operation (generate feedback, diagnose quality, approve a proposal) is a pure function from disk state to disk state. Expressing these as MCP tools makes them independently callable, testable as Python functions, and re-entrant — any tool can be re-run without replaying the full loop. Python agent classes that wrap the same logic add an abstraction layer with no operational benefit.
 
@@ -10,6 +10,6 @@ The Session loop (examiner pass → train → evaluate → diagnose → human re
 
 **Why single-pass Examiner over multi-role council:** A Generator → Critic → Chair pipeline adds per-essay latency (three sequential LLM calls) without a reliable signal that the additional calls improve Score calibration. The Chief Examiner performs the quality gate at the iteration level instead — one LLM call per iteration against all feedback at once, with full access to metrics and iteration history. This is a cheaper and more informed check than inlining a critic into every per-essay call.
 
-**Consequences:** Session resumability is free (read the latest files on disk). The human gate requires no polling — it is a natural pause in the Claude Code conversation. Adding new loop steps means adding a new MCP tool and updating `agents/edsmith.md`, not modifying a graph schema.
+**Consequences:** Session resumability is free (read the latest files on disk). The human gate requires no polling — it is a natural pause in the orchestration conversation. Adding new loop steps means adding a new MCP tool and updating `agents/edsmith.md`, not modifying a graph schema.
 
-**Considered alternative — keep a graph framework for the outer loop:** A graph would provide visual tooling and explicit state transitions but would require framework-specific serialisation, a separate process for the Colab training step, and a fixed branch structure that cannot adapt to the diagnostic output without code changes. The MCP + Claude Code approach is more flexible at equivalent complexity.
+**Considered alternative — keep a graph framework for the outer loop:** A graph would provide visual tooling and explicit state transitions but would require framework-specific serialisation, a separate process for the Colab training step, and a fixed branch structure that cannot adapt to the diagnostic output without code changes. The MCP + conversational agent approach is more flexible at equivalent complexity.

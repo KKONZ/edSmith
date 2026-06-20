@@ -1,6 +1,6 @@
 # Linguistic Feature Tools
 
-Four linguistic analysis tools are exposed as MCP tools in `src/edsmith/tools/`: `grammar_check`, `aoa_stats`, `complexity_stats`, and `discourse_analysis`. Each wraps a pure-Python domain implementation and is registered on the top-level FastMCP server via a `register_*(app)` function, following the RocketSmith pattern.
+Four linguistic analysis tools are exposed as MCP tools in `src/edsmith/tools/`: `grammar_check`, `aoa_stats`, `complexity_stats`, and `discourse_analysis`. Each wraps a pure-Python domain implementation and is registered on the top-level FastMCP server via a `register_*(app: FastMCP)` function.
 
 **grammar_check:** Uses `language_tool_python` to detect grammar and spelling errors. Each flagged error is cross-referenced with the Age-of-Acquisition score of the flagged word, so the Chief Examiner can distinguish errors on basic vocabulary (low AoA) from errors on advanced vocabulary (high AoA) — a meaningfully different diagnostic signal.
 
