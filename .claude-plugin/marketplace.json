@@ -1,0 +1,13 @@
+{
+  "name": "edsmith",
+  "displayName": "edSmith",
+  "description": "Multi-agent feedback generation and scorer training for IELTS writing assessment",
+  "version": "0.1.0",
+  "author": "Karl Konz",
+  "contact": "karl.konz@gmail.com",
+  "homepage": "https://github.com/kkonz/edSmith",
+  "repository": "https://github.com/kkonz/edSmith",
+  "license": "MIT",
+  "category": "Education",
+  "keywords": ["ielts", "writing", "assessment", "feedback", "mcp", "education"]
+}

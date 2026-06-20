@@ -1,0 +1,28 @@
+{
+  "name": "edsmith",
+  "description": "Multi-agent feedback generation and scorer training for IELTS writing assessment",
+  "version": "0.1.0",
+  "author": {
+    "name": "Karl Konz"
+  },
+  "homepage": "https://github.com/kkonz/edSmith",
+  "repository": "https://github.com/kkonz/edSmith",
+  "license": "MIT",
+  "keywords": ["ielts", "writing", "assessment", "feedback", "mcp", "education"],
+  "mcpServers": {
+    "edsmith": {
+      "command": "uv",
+      "args": [
+        "--directory",
+        "${CLAUDE_PLUGIN_ROOT}",
+        "run",
+        "-m",
+        "edsmith.mcp"
+      ],
+      "env": {
+        "PYTHONPATH": "${CLAUDE_PLUGIN_ROOT}/src",
+        "EDSMITH_DRIVE_PATH": "$CLAUDE_PROJECT_DIR/edsmith-data"
+      }
+    }
+  }
+}

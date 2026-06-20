@@ -142,9 +142,11 @@ src/edsmith/
 
 - ✅ **Commit 19c:** Remove `src/edsmith/training/mcp/server.py` and `src/edsmith/mcp/client.py`. Extract training/evaluation logic into `src/edsmith/training/scorer.py` with session-aware `train(session_id, iteration, drive_path)` and `evaluate(session_id, iteration, split, drive_path)` API. Add `colab-mcp` to `.claude/settings.json` `mcpServers` (via `uvx`). Add `notebooks/edsmith_training.ipynb` (setup, train, evaluate cells). Add `docs/adr/0015-colab-mcp-training.md`. Rewrite `docs/guides/colab-setup.md` — replace tunnel instructions with colab-mcp workflow.
 
+- ✅ **Commit 19d:** Add `.claude-plugin/plugin.json` — registers the edSmith MCP server via `uv --directory ${CLAUDE_PLUGIN_ROOT} run -m edsmith.mcp` with `PYTHONPATH` and `EDSMITH_DRIVE_PATH` env vars (mirrors RocketSmith pattern). Add `.claude-plugin/marketplace.json` — Claude Code marketplace listing metadata. Add `.agents/plugins/marketplace.json` — agents marketplace stub pointing to `./plugins/edsmith`. This makes edSmith installable as a Claude Code plugin via `/plugin install` and testable locally via `claude --plugin-dir .`.
+
 ### Group H — Agent markdown content
 
-**Commit 20:** Fill in `agents/examiner.md` with full content: purpose, available MCP tools and their signatures, what `StrategyGuidance` fields mean, how to interpret the feedback summary returned by `run_examiner_pass`.
+- ✅ **Commit 20:** Fill in `agents/examiner.md` with full content: purpose, available MCP tools and their signatures, what `StrategyGuidance` fields mean, how to interpret the feedback summary returned by `run_examiner_pass`.
 
 **Commit 21:** Fill in `agents/chief_examiner.md` with full content: how to interpret a `DiagnosticReport`, when to propose strategy changes vs. prompt policy changes, how to handle a human rejection with critique, how to call `reject_proposal` and re-run.
 
