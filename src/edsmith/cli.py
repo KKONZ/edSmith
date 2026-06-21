@@ -117,3 +117,49 @@ def show_sessions(
         except Exception as exc:
             typer.echo(f"  {state_file.parent.name}  (error: {exc})")
 
+
+# ------------------------------------------------------------------
+# examiner-pass
+# ------------------------------------------------------------------
+
+@app.command("examiner-pass")
+def examiner_pass(
+    session_id: str = typer.Argument(..., help="Session ID"),
+    iteration: int = typer.Argument(..., help="Iteration number (0-based)"),
+    concurrency: int = typer.Option(4, "--concurrency", "-c", help="Max concurrent essay API calls"),
+    drive: Optional[Path] = typer.Option(
+        None, "--drive",
+        help="Override EDSMITH_DRIVE_PATH",
+    ),
+) -> None:
+    """Generate per-component Feedback for all training essays in one iteration."""
+    import asyncio
+    import os
+
+    from edsmith.examiner.run import run_examiner_pass
+
+    drive_path = Path(
+        drive or os.environ.get("EDSMITH_DRIVE_PATH", "/content/drive/MyDrive/edsmith")
+    )
+
+    typer.echo(f"Starting examiner pass  session={session_id}  iteration={iteration}")
+    summary = asyncio.run(
+        run_examiner_pass(
+            session_id=session_id,
+            iteration=iteration,
+            drive_path=drive_path,
+            concurrency=concurrency,
+        )
+    )
+
+    typer.echo(
+        f"\nDone — {summary['essays_processed']}/{summary['essays_total']} essays  "
+        f"({summary['components_covered']} with all 4 components)"
+    )
+    for component, dist in summary.get("score_distributions", {}).items():
+        typer.echo(f"  {component}: mean={dist['mean']:.2f}  std={dist['std']:.2f}  n={dist['count']}")
+    if summary.get("warnings"):
+        typer.echo(f"\n{len(summary['warnings'])} warnings (first 5):")
+        for w in summary["warnings"][:5]:
+            typer.echo(f"  {w}")
+    typer.echo(f"\nFeedback written to {summary['parquet_path']}")

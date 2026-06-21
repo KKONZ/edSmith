@@ -1,6 +1,6 @@
 # MCP Tools and Conversational Agent Orchestration
 
-The Session loop (examiner pass → train → evaluate → diagnose → human review → repeat) is orchestrated by an AI agent acting on `agents/edsmith.md`. All logic is implemented as MCP tools registered in the edSmith FastMCP server. No Python orchestration framework is used.
+The Session loop (examiner pass → train → evaluate → diagnose → human review → repeat) is orchestrated by an AI agent acting on `agents/edsmith.md`. Stateful reasoning steps are implemented as MCP tools registered in the edSmith FastMCP server. Long-running batch jobs with no mid-run decision points run as CLI commands instead — see ADR 0016. No Python orchestration framework is used.
 
 **Why a conversational agent as orchestrator:** The loop is not a fixed graph — it involves judgment calls (is the ExaminerSummary healthy enough to proceed?), a human gate (approve/reject with critique), and conditional branching based on diagnostic output. A conversational AI agent handles these naturally as conversation steps. A graph-based orchestrator would need to encode these branches as conditional edges and provide no benefit over an agent that can reason about the same state.
 

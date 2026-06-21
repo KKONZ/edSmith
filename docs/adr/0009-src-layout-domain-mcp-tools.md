@@ -4,7 +4,7 @@ The edSmith codebase uses a `src/edsmith/` Python library organised into domain 
 
 **src/ layout:** `packages = ["src/edsmith"]` in hatchling and `pythonpath = ["src"]` in pytest. This matches standard Python packaging practice and avoids import confusion between the installed package and the local source tree.
 
-**Domain subpackages:** Each domain area is a subpackage of `src/edsmith/` with its own `mcp/` subfolder containing a `register_*(app: FastMCP)` function. The top-level `src/edsmith/mcp/__main__.py` creates the single `FastMCP` instance and calls each `register_*` function. Domains: `examiner/` (feedback generation), `chief_examiner/` (diagnostics), `training/` (Colab scorer), `tools/` (linguistic features), `session/` (on-disk state).
+**Domain subpackages:** Each domain area is a subpackage of `src/edsmith/` with its own `mcp/` subfolder containing a `register_*(app: FastMCP)` function. The top-level `src/edsmith/mcp/__main__.py` creates the single `FastMCP` instance and calls each `register_*` function. Domains with MCP tools: `chief_examiner/` (diagnostics), `tools/` (linguistic features), `session/` (on-disk state). The `examiner/` domain exposes its batch pass as the `edsmith examiner-pass` CLI command rather than an MCP tool — see ADR 0016.
 
 **No Python agent classes:** All domain logic lives in MCP tool implementations. There are no `*Agent` Python classes. The `agents/` directory contains only markdown files describing how the session orchestrator should use the tools.
 

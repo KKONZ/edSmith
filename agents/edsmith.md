@@ -4,18 +4,24 @@ Orchestrates a complete edSmith session: initialize → examiner pass → train 
 
 ## Purpose
 
-This agent drives the full iteration loop for a Session. It coordinates two other agents (`examiner` and `chief_examiner`), the Colab GPU training environment, and the human reviewer. Each iteration produces a feedback parquet, a trained Scorer checkpoint, evaluation metrics, a diagnostic, and a human-approved set of changes for the next iteration.
+This agent drives the full iteration loop for a Session. It coordinates the Colab GPU training environment and the human reviewer. Each iteration produces a feedback parquet, a trained Scorer checkpoint, evaluation metrics, a diagnostic, and a human-approved set of changes for the next iteration.
 
 State is fully on disk — every step is independently resumable.
 
-## MCP Servers
+## MCP Servers and CLI
 
 Two MCP servers are in scope during a session:
 
 | Server | What it provides | How to start |
 |---|---|---|
-| **edsmith** | All orchestration tools: `init_session`, `run_examiner_pass`, `run_chief_examiner`, `approve_proposal`, `reject_proposal`, and linguistic tools | `edsmith start-server` or auto-started via the Claude Code plugin |
+| **edsmith** | `init_session`, `run_chief_examiner`, `approve_proposal`, `reject_proposal`, and linguistic tools | `edsmith start-server` |
 | **colab-mcp** | `run_cell`, `add_cell` — bridges to the Colab browser session for GPU training | `uvx git+https://github.com/googlecolab/colab-mcp` (run locally; Colab notebook must be open) |
+
+The examiner pass runs as a **CLI command** via the terminal tool (not MCP) — it is a long-running batch job that prints live progress:
+
+```
+edsmith examiner-pass <session_id> <iteration> [--concurrency 4]
+```
 
 The edsmith server tools all read `EDSMITH_DRIVE_PATH` for the session data location. The colab-mcp tools drive the open Colab notebook — no URL or tunnel configuration needed.
 
@@ -43,40 +49,39 @@ Before running any training or evaluation steps:
 1. Open `notebooks/edsmith_training.ipynb` in Colab (File → Open → GitHub → paste repo URL).
 2. Set the runtime to GPU (Runtime → Change runtime type → T4 GPU).
 3. Run **Cell 1** once — mounts Drive, installs `edsmith[training]`, sets `EDSMITH_DRIVE_PATH`.
-4. Confirm `colab-mcp` is connected as an MCP server in this session (the server runs locally; check Claude Code's MCP server list).
+4. Confirm `colab-mcp` is connected as an MCP server in this session.
 
-After Cell 1 completes, Claude Code drives all subsequent cell execution via `run_cell`. You do not run Cells 2 or 3 manually.
+After Cell 1 completes, the agent drives all subsequent cell execution via `run_cell`. You do not run Cells 2 or 3 manually.
 
-If the Colab runtime disconnects (idle timeout ~90 min): re-open the notebook, re-run Cell 1, and tell Claude Code you are reconnected. Session data on Drive is safe — resume from the last completed step.
+If the Colab runtime disconnects (idle timeout ~90 min): re-open the notebook, re-run Cell 1, and reconnect. Session data on Drive is safe — resume from the last completed step.
 
 ## Complete Session Loop
 
 ### Step 0 — Initialize a new session
 
-Call `init_session` once per new session. This creates `state.json` on disk with default `PromptPolicy` for all four components and `StrategyGuidance` with all flags off.
+Call `init_session` once per new session. Pass `config_path` to load model, sampling, and policy settings from `session.yaml`.
 
 ```
-init_session(session_id=None, parent_session_id=None)
-→ {session_id, iteration, parent_session_id, state_path}
+init_session(session_id=None, parent_session_id=None, config_path="session.yaml")
+→ {session_id, iteration, parent_session_id, state_path, scorer_config_path}
 ```
 
-Save the returned `session_id` — you will pass it to every subsequent tool call. If branching from a prior session (e.g., to explore a different strategy), pass `parent_session_id` to link the sessions in the history tree.
+Save the returned `session_id` — you will pass it to every subsequent step. If branching from a prior session, pass `parent_session_id` to link the sessions in the history tree.
 
 ---
 
 ### Step 1 — Run Examiner pass
 
-```
-run_examiner_pass(session_id, iteration, concurrency=4)
-→ ExaminerSummary
+```bash
+edsmith examiner-pass <session_id> <iteration> [--concurrency 4]
 ```
 
-Reads current `StrategyGuidance` and `PromptPolicy` from `state.json`. On the first call, downloads and splits the IELTS dataset into train/val/test parquets under `sessions/{session_id}/data/`. Generates per-component Feedback for all training Essays concurrently.
+Reads current `StrategyGuidance` and `PromptPolicy` from `state.json`. On the first call, downloads and splits the IELTS dataset into train/val/test parquets under `sessions/{session_id}/data/` using the sampling config from state. Generates per-component Feedback for all training Essays concurrently.
 
 Writes: `sessions/{session_id}/feedback_iter{N}.parquet`
 
-Check the returned `ExaminerSummary`:
-- If `essays_processed` < `essays_total` by more than 5%, check `warnings` and re-run before proceeding.
+Check the printed summary:
+- If `essays_processed` < `essays_total` by more than 5%, check the warning list and re-run before proceeding.
 - If `components_covered` < `essays_processed`, note it — partial coverage is diagnosable but worth flagging to the Chief Examiner.
 
 See `agents/examiner.md` for full field reference.
@@ -93,7 +98,7 @@ ITERATION = <N>
 # [Cell 2 body follows — do not modify]
 ```
 
-Cell 2 reads `feedback_iter{N}.parquet`, fine-tunes Qwen3 with LoRA, and writes the model to `sessions/{session_id}/models/iter{N}/`. The cell prints `model_path:` on completion.
+Cell 2 reads `feedback_iter{N}.parquet` and `scorer_config.json`, fine-tunes Qwen3 with LoRA, and writes the model to `sessions/{session_id}/models/iter{N}/`. The cell prints `model_path:` on completion.
 
 Training takes 5–15 minutes on a T4 GPU depending on dataset size and `max_steps`. Wait for the cell to complete before proceeding.
 
@@ -187,16 +192,15 @@ Every step writes to disk before returning. If the conversation ends or a step f
    - `models/iter{N}/` exists → Step 2 completed for iteration N
    - `metrics_iter{N}.json` exists → Step 3 completed for iteration N
    - `proposals/iter{N}.json` with `status: "pending"` → Step 4 completed, awaiting human review
-3. **Re-run from the next incomplete step.** All tools are re-entrant — re-running a completed step overwrites its output with a fresh result (use this intentionally if you want to re-generate feedback with the same policy).
+3. **Re-run from the next incomplete step.** All steps are re-entrant — re-running a completed step overwrites its output (use this intentionally if you want to re-generate feedback with the same policy).
 
 If a pending proposal is present from a previous conversation, call `approve_proposal` or `reject_proposal` before starting a new examiner pass at the incremented iteration.
 
-## All edsmith MCP Tools (quick reference)
+## edsmith MCP Tools (quick reference)
 
 | Tool | Step | Description |
 |---|---|---|
 | `init_session` | 0 | Create `state.json` for a new session |
-| `run_examiner_pass` | 1 | Generate feedback parquet for current iteration |
 | `run_chief_examiner` | 4 | Diagnose feedback quality, produce proposal |
 | `approve_proposal` | 5 | Apply proposed changes, advance iteration |
 | `reject_proposal` | 5 | Store critique, leave state unchanged |
@@ -205,13 +209,14 @@ If a pending proposal is present from a previous conversation, call `approve_pro
 | `complexity_stats` | — | Syntactic complexity metrics |
 | `discourse_analysis` | — | Paragraph structure and transition analysis |
 
-Scorer training and evaluation are **not** edsmith MCP tools — they run in Colab via colab-mcp `run_cell`.
+Scorer training and evaluation run in Colab via colab-mcp `run_cell`. The examiner pass runs via the `edsmith examiner-pass` CLI command.
 
 ## On-disk Layout
 
 ```
 {EDSMITH_DRIVE_PATH}/sessions/{session_id}/
-  state.json                      ← SessionState (policies, strategy, iteration)
+  state.json                      ← SessionState (policies, strategy, iteration, models, sampling)
+  scorer_config.json              ← ScorerConfig snapshot written by init_session
   data/
     train.parquet                 ← IELTS training split (written on first examiner pass)
     val.parquet

@@ -10,6 +10,7 @@ from edsmith.examiner.feedback import (
     _extract_tag,
     generate_feedback,
 )
+from edsmith.examiner.run import run_examiner_pass
 from edsmith.session.state import SessionState, save_state
 
 # ---------------------------------------------------------------------------
@@ -157,7 +158,7 @@ class TestGenerateFeedback:
 
 
 # ---------------------------------------------------------------------------
-# run_examiner_pass (tool function called directly, no HTTP)
+# run_examiner_pass
 # ---------------------------------------------------------------------------
 
 _SMALL_TRAIN = pd.DataFrame([
@@ -168,7 +169,7 @@ _SMALL_TRAIN = pd.DataFrame([
 
 @pytest.fixture
 def session_env(tmp_path, stub_provider):
-    """Minimal on-disk session + patched provider."""
+    """Minimal on-disk session + pre-written train parquet."""
     stub_provider.set(_STUB_RESPONSE)
     drive_path = tmp_path / "drive"
 
@@ -182,56 +183,41 @@ def session_env(tmp_path, stub_provider):
     return drive_path, stub_provider
 
 
-def _make_tool_fn(stub_provider, monkeypatch, drive_path):
-    import edsmith.examiner.mcp.tools as tools_mod
-    from fastmcp import FastMCP
-
-    monkeypatch.setenv("EDSMITH_DRIVE_PATH", str(drive_path))
-    monkeypatch.setattr(tools_mod, "OpenRouterProvider", lambda: stub_provider)
-    return tools_mod.register_examiner_pass(FastMCP("test"))
-
-
 class TestRunExaminerPass:
-    def test_parquet_written(self, session_env, monkeypatch):
+    def test_parquet_written(self, session_env):
         drive_path, stub = session_env
-        fn = _make_tool_fn(stub, monkeypatch, drive_path)
-        asyncio.run(fn(session_id="test-session", iteration=0))
+        asyncio.run(run_examiner_pass("test-session", 0, drive_path, provider=stub))
         assert (drive_path / "sessions" / "test-session" / "feedback_iter0.parquet").exists()
 
-    def test_summary_has_required_keys(self, session_env, monkeypatch):
+    def test_summary_has_required_keys(self, session_env):
         drive_path, stub = session_env
-        fn = _make_tool_fn(stub, monkeypatch, drive_path)
-        result = asyncio.run(fn(session_id="test-session", iteration=0))
+        result = asyncio.run(run_examiner_pass("test-session", 0, drive_path, provider=stub))
         for key in ("session_id", "iteration", "essays_processed", "essays_total",
                     "components_covered", "score_distributions", "warnings", "parquet_path"):
             assert key in result
 
-    def test_all_essays_processed(self, session_env, monkeypatch):
+    def test_all_essays_processed(self, session_env):
         drive_path, stub = session_env
-        fn = _make_tool_fn(stub, monkeypatch, drive_path)
-        result = asyncio.run(fn(session_id="test-session", iteration=0))
+        result = asyncio.run(run_examiner_pass("test-session", 0, drive_path, provider=stub))
         assert result["essays_processed"] == 3
         assert result["essays_total"] == 3
 
-    def test_all_components_covered(self, session_env, monkeypatch):
+    def test_all_components_covered(self, session_env):
         drive_path, stub = session_env
-        fn = _make_tool_fn(stub, monkeypatch, drive_path)
-        result = asyncio.run(fn(session_id="test-session", iteration=0))
+        result = asyncio.run(run_examiner_pass("test-session", 0, drive_path, provider=stub))
         assert result["components_covered"] == 3
 
-    def test_score_distributions_present(self, session_env, monkeypatch):
+    def test_score_distributions_present(self, session_env):
         drive_path, stub = session_env
-        fn = _make_tool_fn(stub, monkeypatch, drive_path)
-        result = asyncio.run(fn(session_id="test-session", iteration=0))
+        result = asyncio.run(run_examiner_pass("test-session", 0, drive_path, provider=stub))
         for component in ("task_response", "coherence", "lexical", "grammar"):
             assert component in result["score_distributions"]
             dist = result["score_distributions"][component]
             assert "mean" in dist and "std" in dist
 
-    def test_parquet_has_correct_schema(self, session_env, monkeypatch):
+    def test_parquet_has_correct_schema(self, session_env):
         drive_path, stub = session_env
-        fn = _make_tool_fn(stub, monkeypatch, drive_path)
-        asyncio.run(fn(session_id="test-session", iteration=0))
+        asyncio.run(run_examiner_pass("test-session", 0, drive_path, provider=stub))
         df = pd.read_parquet(drive_path / "sessions" / "test-session" / "feedback_iter0.parquet")
         for col in ("question", "essay", "component", "feedback_text", "score", "tag"):
             assert col in df.columns

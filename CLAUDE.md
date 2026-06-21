@@ -9,12 +9,13 @@ Use terms from `CONTEXT.md` exactly. Key ones: **Question** (not prompt/task), *
 ## Commands
 
 ```bash
-pip install -e ".[dev]"           # install with dev extras (pytest)
+pip install -e ".[dev,tools]"      # install with dev + linguistic tool extras
 pytest                             # run all tests (no API key needed)
 pytest tests/examiner/             # run a domain test directory
 edsmith init-config session.yaml   # write a fresh default config
 edsmith start-server --port 8000   # start the edSmith MCP server
 edsmith show-sessions              # list active sessions and pending proposals
+edsmith examiner-pass <id> <iter>  # run examiner batch pass (CLI, not MCP)
 ```
 
 `[training]` extras (`unsloth`, `trl`, `transformers`) are GPU-only — install only in the Colab environment, never locally.
