@@ -1,9 +1,5 @@
 {
   "mcpServers": {
-    "edsmith": {
-      "command": "uv",
-      "args": ["run", "-m", "edsmith.mcp"]
-    },
     "colab-mcp": {
       "type": "stdio",
       "command": "uvx",
