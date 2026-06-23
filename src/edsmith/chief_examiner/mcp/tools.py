@@ -16,7 +16,7 @@ from edsmith.session.state import (
     save_state,
 )
 
-_DEFAULT_DRIVE = "/content/drive/MyDrive/edsmith"
+_DEFAULT_DRIVE = Path(__file__).resolve().parents[4] / "edsmith_drive"
 
 
 def _drive_path() -> Path:

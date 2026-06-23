@@ -2,10 +2,12 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import sys
 from pathlib import Path
 
 import pandas as pd
+from tqdm import tqdm
 
 from edsmith.data.loader import apply_size_limit, train_test_split
 from edsmith.data.parser import COMPONENT_HEADINGS
@@ -86,12 +88,31 @@ def _build_summary(
     }
 
 
+def _make_logger(session_id: str, iteration: int, log_path: Path, terminal: bool) -> logging.Logger:
+    logger = logging.getLogger(f"edsmith.examiner.{session_id}.{iteration}")
+    logger.setLevel(logging.DEBUG)
+    logger.handlers.clear()
+
+    fh = logging.FileHandler(log_path, encoding="utf-8")
+    fh.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
+    logger.addHandler(fh)
+
+    if terminal:
+        ch = logging.StreamHandler(sys.stderr)
+        ch.setFormatter(logging.Formatter("%(message)s"))
+        ch.setLevel(logging.INFO)
+        logger.addHandler(ch)
+
+    return logger
+
+
 async def run_examiner_pass(
     session_id: str,
     iteration: int,
     drive_path: Path,
     concurrency: int = 4,
     provider: LLMProvider | None = None,
+    progress: bool = True,
 ) -> dict:
     """Generate per-component Feedback for all training essays in one iteration.
 
@@ -100,6 +121,7 @@ async def run_examiner_pass(
     parquet to the session directory. Returns an ExaminerSummary dict.
 
     provider — inject an LLMProvider for testing; defaults to OpenRouterProvider.
+    progress — show tqdm bar and INFO logs on stderr (default True).
     """
     state = load_state(drive_path, session_id)
     train_df = await asyncio.to_thread(_ensure_session_data, drive_path, session_id, state)
@@ -108,14 +130,20 @@ async def run_examiner_pass(
         from edsmith.providers.openrouter import OpenRouterProvider
         provider = OpenRouterProvider()
 
+    log_path = drive_path / "sessions" / session_id / f"examiner_iter{iteration}.log"
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    logger = _make_logger(session_id, iteration, log_path, terminal=progress)
+
     n_essays = len(train_df)
     semaphore = asyncio.Semaphore(concurrency)
     records: list[dict] = []
     warnings: list[str] = []
-    completed = 0
+
+    logger.info(f"Starting examiner pass — session={session_id} iteration={iteration} essays={n_essays} model={state.models.generator}")
+
+    pbar = tqdm(total=n_essays, disable=not progress, file=sys.stderr, desc="essays", unit="essay")
 
     async def process_essay(row: dict) -> None:
-        nonlocal completed
         async with semaphore:
             try:
                 feedbacks = await generate_feedback(
@@ -136,19 +164,25 @@ async def run_examiner_pass(
                         "score": fb.score,
                         "tag": fb.tag,
                     })
+                    logger.debug(f"OK  component={component} score={fb.score}")
             except Exception as exc:
-                warnings.append(f"Essay failed: {exc}")
+                msg = f"Essay failed: {exc}"
+                warnings.append(msg)
+                logger.warning(msg)
             finally:
-                completed += 1
-                if completed % 10 == 0 or completed == n_essays:
-                    print(f"  [{completed}/{n_essays}]", end="\r", flush=True, file=sys.stderr)
+                pbar.update(1)
 
     await asyncio.gather(*[process_essay(row) for row in train_df.to_dict(orient="records")])
-    print(file=sys.stderr)  # newline after progress
+    pbar.close()
 
     feedback_df = pd.DataFrame(records)
     out_path = drive_path / "sessions" / session_id / f"feedback_iter{iteration}.parquet"
     out_path.parent.mkdir(parents=True, exist_ok=True)
     feedback_df.to_parquet(out_path, index=False)
 
-    return _build_summary(feedback_df, n_essays, warnings, out_path, session_id, iteration)
+    summary = _build_summary(feedback_df, n_essays, warnings, out_path, session_id, iteration)
+    logger.info(
+        f"Done — {summary['essays_processed']}/{n_essays} essays  "
+        f"warnings={len(warnings)}  log={log_path}"
+    )
+    return summary

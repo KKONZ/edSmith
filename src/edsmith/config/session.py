@@ -8,8 +8,7 @@ from pydantic import BaseModel, Field
 
 
 class ModelConfig(BaseModel):
-    generator: str = "mistralai/mistral-7b-instruct"
-    critic: str = "mistralai/mistral-7b-instruct"
+    generator: str = "meta-llama/llama-3.1-8b-instruct"
     chair: str = "anthropic/claude-sonnet-4-5"
 
 

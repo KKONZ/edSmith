@@ -4,6 +4,11 @@ from pathlib import Path
 from typing import Optional
 
 import typer
+from dotenv import load_dotenv
+
+load_dotenv()
+
+_DEFAULT_DRIVE = Path(__file__).resolve().parents[2] / "edsmith_drive"
 
 app = typer.Typer(name="edsmith", add_completion=False, no_args_is_help=True)
 
@@ -51,7 +56,7 @@ def start_server(
     host: str = typer.Option("0.0.0.0", "--host", help="Host to bind to"),
     drive: Optional[Path] = typer.Option(
         None, "--drive",
-        help="Override EDSMITH_DRIVE_PATH (default: /content/drive/MyDrive/edsmith)",
+        help="Override EDSMITH_DRIVE_PATH",
     ),
 ) -> None:
     """Start the edSmith MCP server (all domain tools registered)."""
@@ -74,7 +79,7 @@ def start_server(
 def show_sessions(
     drive: Optional[Path] = typer.Option(
         None, "--drive",
-        help="Override EDSMITH_DRIVE_PATH (default: /content/drive/MyDrive/edsmith)",
+        help="Override EDSMITH_DRIVE_PATH",
     ),
 ) -> None:
     """List all sessions, their iteration counter, and any pending proposals."""
@@ -82,7 +87,7 @@ def show_sessions(
     import os
 
     drive_path = Path(
-        drive or os.environ.get("EDSMITH_DRIVE_PATH", "/content/drive/MyDrive/edsmith")
+        drive or os.environ.get("EDSMITH_DRIVE_PATH", _DEFAULT_DRIVE)
     )
     sessions_dir = drive_path / "sessions"
 
@@ -131,6 +136,7 @@ def examiner_pass(
         None, "--drive",
         help="Override EDSMITH_DRIVE_PATH",
     ),
+    progress: bool = typer.Option(True, "--progress/--no-progress", help="Show tqdm bar and logs on stderr"),
 ) -> None:
     """Generate per-component Feedback for all training essays in one iteration."""
     import asyncio
@@ -139,16 +145,16 @@ def examiner_pass(
     from edsmith.examiner.run import run_examiner_pass
 
     drive_path = Path(
-        drive or os.environ.get("EDSMITH_DRIVE_PATH", "/content/drive/MyDrive/edsmith")
+        drive or os.environ.get("EDSMITH_DRIVE_PATH", _DEFAULT_DRIVE)
     )
 
-    typer.echo(f"Starting examiner pass  session={session_id}  iteration={iteration}")
     summary = asyncio.run(
         run_examiner_pass(
             session_id=session_id,
             iteration=iteration,
             drive_path=drive_path,
             concurrency=concurrency,
+            progress=progress,
         )
     )
 
