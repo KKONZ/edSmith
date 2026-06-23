@@ -1,7 +1,7 @@
 models:
   chair: anthropic/claude-sonnet-4-5
-  critic: qwen/qwen3-14b
-  generator: qwen/qwen3-14b
+  critic: mistralai/mistral-7b-instruct
+  generator: mistralai/mistral-7b-instruct
 prompt_policies:
   coherence:
     additional_instructions: ''
@@ -25,11 +25,11 @@ prompt_policies:
     specificity: 2
 sampling:
   random_state: 42
-  size: 600
-  test_ratio: 0.05
-  validation_ratio: 0.05
+  size: null
+  test_ratio: null
+  validation_ratio: 0.15
 scorer:
-  component: task_response
+  component: null
   gradient_accumulation_steps: 4
   learning_rate: 0.0002
   load_in_4bit: true

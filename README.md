@@ -7,7 +7,7 @@ Multi-agent generative feedback system for IELTS writing assessment. An Examiner
 **1. Install**
 
 ```bash
-pip install -e ".[dev]"
+pip install -e ".[dev,tools]"
 ```
 
 **2. Set environment variables**
@@ -23,17 +23,32 @@ export EDSMITH_DRIVE_PATH="/path/to/edsmith"   # local mirror of Google Drive fo
 edsmith init-config session.yaml
 ```
 
-**4. Start the local MCP server**
+**4. Install the Claude Code plugin**
 
-```bash
-edsmith start-server --port 8000
+Inside a Claude Code session, add the marketplace and install the plugin at user scope:
+
+```
+/plugin marketplace add KKONZ/edSmith
+/plugin install edsmith@edsmith --scope user
 ```
 
-Add the server to Claude Code's MCP config (`~/.claude/claude_desktop_config.json` or via the IDE settings) so that Claude Code can call edSmith tools.
+After installing, reload and verify the MCP server is connected:
+
+```
+/reload-plugins
+/mcp
+```
+
+Updating to a new version: uninstall first, then reinstall:
+
+```
+/plugin uninstall edsmith@edsmith
+/plugin install edsmith@edsmith --scope user
+```
 
 **5. Connect a Colab GPU runtime**
 
-Open `notebooks/edsmith_training.ipynb` in a Colab session with a GPU runtime. The notebook uses [`googlecolab/colab-mcp`](https://github.com/googlecolab/colab-mcp) — no tunnel or custom server required. Add the Colab MCP URL to Claude Code's MCP config the same way as the local server.
+Open `notebooks/edsmith_training.ipynb` in a Colab session with a GPU runtime. The notebook uses [`googlecolab/colab-mcp`](https://github.com/googlecolab/colab-mcp) — add it as a separate MCP server via `uvx git+https://github.com/googlecolab/colab-mcp`.
 
 Make sure Google Drive is mounted in Colab and that `EDSMITH_DRIVE_PATH` points to the same folder in both environments.
 
@@ -56,10 +71,11 @@ Local machine                        Colab GPU
 ─────────────────────────────────    ──────────────────────────────
 edSmith MCP server                   colab-mcp (official plugin)
   init_session                         notebooks/edsmith_training.ipynb
-  run_examiner_pass                      Cell 2 — train Scorer
-  run_chief_examiner                     Cell 3 — evaluate, save metrics
-  approve_proposal / reject_proposal
+  run_chief_examiner                     Cell 2 — train Scorer
+  approve_proposal / reject_proposal     Cell 3 — evaluate, save metrics
   (LLM API calls via OpenRouter)
+edsmith examiner-pass (CLI)
+  batch feedback generation
 
         both read/write ──────────────→  EDSMITH_DRIVE_PATH/
                                            sessions/{session_id}/
@@ -78,9 +94,10 @@ Claude Code is the session orchestrator — it calls MCP tools in sequence, hand
 ## CLI
 
 ```bash
-edsmith init-config [output]         # write a default session.yaml
-edsmith start-server [--port PORT]   # start the edSmith MCP server
-edsmith show-sessions [--drive PATH] # list sessions, iterations, pending proposals
+edsmith init-config [output]                      # write a default session.yaml
+edsmith start-server [--port PORT]                # start the edSmith MCP server
+edsmith show-sessions [--drive PATH]              # list sessions, iterations, pending proposals
+edsmith examiner-pass <session_id> <iteration>    # batch feedback generation (long-running)
 ```
 
 Run tests (no API key needed):
