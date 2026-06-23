@@ -88,14 +88,27 @@ def _build_summary(
     }
 
 
+_MODULE_LOGGERS = [
+    "edsmith.examiner.feedback",
+    "edsmith.providers.openrouter",
+]
+
+
 def _make_logger(session_id: str, iteration: int, log_path: Path, terminal: bool) -> logging.Logger:
     logger = logging.getLogger(f"edsmith.examiner.{session_id}.{iteration}")
     logger.setLevel(logging.DEBUG)
     logger.handlers.clear()
 
     fh = logging.FileHandler(log_path, encoding="utf-8")
-    fh.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
+    fh.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s %(message)s"))
     logger.addHandler(fh)
+
+    # Also direct module-level loggers (feedback, openrouter) to the same file
+    for name in _MODULE_LOGGERS:
+        mod_logger = logging.getLogger(name)
+        mod_logger.setLevel(logging.DEBUG)
+        mod_logger.propagate = False
+        mod_logger.handlers = [fh]
 
     if terminal:
         ch = logging.StreamHandler(sys.stderr)
@@ -153,6 +166,7 @@ async def run_examiner_pass(
                     strategy=state.strategy_guidance,
                     provider=provider,
                     model_config=state.models,
+                    band=row.get("band"),
                 )
                 for component, fb in feedbacks.items():
                     records.append({

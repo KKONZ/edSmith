@@ -19,7 +19,7 @@ class StubProvider(LLMProvider):
     def set(self, content: str) -> None:
         self._content = content
 
-    def complete(self, messages, model, temperature=0.7, max_tokens=2048):
+    def complete(self, messages, model, temperature=0.7, max_tokens=None, enable_thinking=False, tools=None):
         return CompletionResponse(
             content=self._content,
             model=model,
@@ -27,7 +27,7 @@ class StubProvider(LLMProvider):
             output_tokens=self._output,
         )
 
-    async def acomplete(self, messages, model, temperature=0.7, max_tokens=2048):
+    async def acomplete(self, messages, model, temperature=0.7, max_tokens=None, enable_thinking=False, tools=None):
         return self.complete(messages, model, temperature, max_tokens)
 
 

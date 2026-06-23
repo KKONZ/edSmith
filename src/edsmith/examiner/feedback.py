@@ -2,12 +2,18 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import re
 from dataclasses import dataclass
 
 from edsmith.config.session import ModelConfig, PromptPolicy, StrategyGuidance
 from edsmith.data.parser import COMPONENT_HEADINGS, _extract_score_from_body
-from edsmith.providers.base import LLMProvider, Message
+from edsmith.examiner.rubric import get_band_descriptors
+from edsmith.providers.base import LLMProvider, Message, ToolCall
+
+logger = logging.getLogger("edsmith.examiner.feedback")
+
+_MAX_TOOL_ROUNDS = 6
 
 
 # ---------------------------------------------------------------------------
@@ -45,6 +51,7 @@ def _extract_tag(text: str, tag: str) -> str | None:
 
 # ---------------------------------------------------------------------------
 # Linguistic tool context (synchronous — run via asyncio.to_thread)
+# Used only when use_tool_calling=False
 # ---------------------------------------------------------------------------
 
 def _collect_tool_context_sync(essay: str, strategy: StrategyGuidance) -> str:
@@ -54,28 +61,28 @@ def _collect_tool_context_sync(essay: str, strategy: StrategyGuidance) -> str:
         try:
             from edsmith.tools.grammar import grammar_check
             parts.append(f"Grammar analysis: {grammar_check(essay)['summary']}")
-        except ImportError:
+        except Exception:
             pass
 
     if strategy.use_aoa:
         try:
             from edsmith.tools.aoa import compute_aoa_stats
             parts.append(f"Vocabulary AoA: {compute_aoa_stats(essay)['summary']}")
-        except ImportError:
+        except Exception:
             pass
 
     if strategy.use_complexity:
         try:
             from edsmith.tools.complexity import complexity_stats
             parts.append(f"Syntactic complexity: {complexity_stats(essay)['summary']}")
-        except ImportError:
+        except Exception:
             pass
 
     if strategy.use_discourse:
         try:
             from edsmith.tools.discourse import discourse_analysis
             parts.append(f"Discourse structure: {discourse_analysis(essay)['summary']}")
-        except ImportError:
+        except Exception:
             pass
 
     return "\n".join(parts)
@@ -92,6 +99,7 @@ def _build_messages(
     policy: PromptPolicy,
     strategy: StrategyGuidance,
     tool_context: str,
+    band: float | None = None,
 ) -> list[Message]:
     heading = COMPONENT_HEADINGS[component]
 
@@ -99,6 +107,16 @@ def _build_messages(
         f"You are an expert IELTS examiner assessing the '{heading}' component.",
         f"Specificity level: {policy.specificity}/5 (1=brief overview, 5=highly detailed).",
     ]
+
+    system_parts.append(get_band_descriptors(component))
+
+    if band is not None:
+        system_parts.append(
+            f"The verified overall IELTS band for this essay is {band}. "
+            f"Your score for '{heading}' must be consistent with this — "
+            f"the four component scores average to the overall band."
+        )
+
     if policy.evidence_required:
         system_parts.append(
             "Cite specific evidence from the essay to support every point you make."
@@ -118,7 +136,13 @@ def _build_messages(
             "Use contrastive anchoring: explicitly compare the essay to what "
             "a higher and lower band would look like for this component."
         )
-    if tool_context:
+
+    if strategy.use_tool_calling:
+        system_parts.append(
+            "You have access to linguistic analysis tools. Call them on the full essay "
+            "or specific excerpts to gather objective evidence before writing your assessment."
+        )
+    elif tool_context:
         system_parts.append(f"\nLinguistic analysis findings (for reference):\n{tool_context}")
 
     system_parts.append(
@@ -135,6 +159,40 @@ def _build_messages(
 
 
 # ---------------------------------------------------------------------------
+# Tool execution loop (used when strategy.use_tool_calling=True)
+# ---------------------------------------------------------------------------
+
+async def _run_tool_loop(
+    messages: list[Message],
+    tools: list[dict],
+    provider: LLMProvider,
+    model: str,
+    enable_thinking: bool,
+) -> str:
+    from edsmith.examiner.tool_defs import execute_tool
+
+    for _ in range(_MAX_TOOL_ROUNDS):
+        response = await provider.acomplete(
+            messages, model=model, enable_thinking=enable_thinking, tools=tools
+        )
+
+        if not response.tool_calls:
+            return response.content
+
+        # Append assistant turn with the tool calls
+        messages.append(Message(role="assistant", content=response.content or None, tool_calls=response.tool_calls))
+
+        # Execute each tool and append results
+        for tc in response.tool_calls:
+            result = await asyncio.to_thread(execute_tool, tc.name, tc.arguments)
+            logger.debug("tool_call name=%s result_len=%d", tc.name, len(result))
+            messages.append(Message(role="tool", content=result, tool_call_id=tc.id))
+
+    # Max rounds reached — do a final call without tools to force a response
+    return (await provider.acomplete(messages, model=model, enable_thinking=enable_thinking)).content
+
+
+# ---------------------------------------------------------------------------
 # Per-component generation
 # ---------------------------------------------------------------------------
 
@@ -147,10 +205,19 @@ async def _generate_component(
     tool_context: str,
     provider: LLMProvider,
     model: str,
+    band: float | None = None,
+    enable_thinking: bool = False,
 ) -> ComponentFeedback:
-    messages = _build_messages(question, essay, component, policy, strategy, tool_context)
-    response = await provider.acomplete(messages, model=model)
-    text = response.content
+    messages = _build_messages(question, essay, component, policy, strategy, tool_context, band=band)
+
+    if strategy.use_tool_calling:
+        from edsmith.examiner.tool_defs import get_tool_definitions
+        tools = get_tool_definitions(strategy)
+        text = await _run_tool_loop(messages, tools, provider, model, enable_thinking)
+    else:
+        response = await provider.acomplete(messages, model=model, enable_thinking=enable_thinking)
+        text = response.content
+
     return ComponentFeedback(
         component=component,
         feedback=text,
@@ -170,15 +237,19 @@ async def generate_feedback(
     strategy: StrategyGuidance,
     provider: LLMProvider,
     model_config: ModelConfig,
+    band: float | None = None,
 ) -> dict[str, ComponentFeedback]:
     """Generate per-component feedback for a single essay.
 
-    Linguistic tools are collected once (in a thread, since they are
-    synchronous) before launching concurrent per-component LLM calls.
+    When strategy.use_tool_calling is False, linguistic tools are collected once
+    (in a thread) before launching concurrent per-component LLM calls.
+    When True, tools are passed as API function definitions and the LLM calls
+    them dynamically during its reasoning.
     """
-    tool_context = await asyncio.to_thread(
-        _collect_tool_context_sync, essay, strategy
-    )
+    if strategy.use_tool_calling:
+        tool_context = ""
+    else:
+        tool_context = await asyncio.to_thread(_collect_tool_context_sync, essay, strategy)
 
     tasks = [
         _generate_component(
@@ -190,6 +261,8 @@ async def generate_feedback(
             tool_context=tool_context,
             provider=provider,
             model=model_config.generator,
+            band=band,
+            enable_thinking=model_config.enable_thinking,
         )
         for component in COMPONENT_HEADINGS
     ]

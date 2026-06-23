@@ -1,6 +1,7 @@
 models:
   chair: anthropic/claude-sonnet-4-5
   generator: qwen/qwen3.5-9b
+  enable_thinking: false
 prompt_policies:
   coherence:
     additional_instructions: ''
@@ -24,9 +25,17 @@ prompt_policies:
     specificity: 2
 sampling:
   random_state: 42
-  size: 400
+  size: 12
   test_ratio: 0.15
   validation_ratio: 0.15
+strategy_guidance:
+  use_aoa: true
+  use_grammar: true
+  use_complexity: false
+  use_discourse: false
+  contrastive_anchoring: false
+  per_component_focus: {}
+  use_tool_calling: true
 scorer:
   component: null
   gradient_accumulation_steps: 4

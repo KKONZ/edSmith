@@ -1,13 +1,22 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+
+
+@dataclass
+class ToolCall:
+    id: str
+    name: str
+    arguments: str  # raw JSON string from the API
 
 
 @dataclass
 class Message:
-    role: str  # "system" | "user" | "assistant"
-    content: str
+    role: str  # "system" | "user" | "assistant" | "tool"
+    content: str | None = None
+    tool_calls: list[ToolCall] | None = None   # set on assistant turn that made calls
+    tool_call_id: str | None = None            # set on tool result turns
 
 
 @dataclass
@@ -16,6 +25,7 @@ class CompletionResponse:
     model: str
     input_tokens: int
     output_tokens: int
+    tool_calls: list[ToolCall] = field(default_factory=list)
 
 
 class LLMProvider(ABC):
@@ -25,7 +35,9 @@ class LLMProvider(ABC):
         messages: list[Message],
         model: str,
         temperature: float = 0.7,
-        max_tokens: int = 2048,
+        max_tokens: int | None = None,
+        enable_thinking: bool = False,
+        tools: list[dict] | None = None,
     ) -> CompletionResponse: ...
 
     @abstractmethod
@@ -34,5 +46,7 @@ class LLMProvider(ABC):
         messages: list[Message],
         model: str,
         temperature: float = 0.7,
-        max_tokens: int = 2048,
+        max_tokens: int | None = None,
+        enable_thinking: bool = False,
+        tools: list[dict] | None = None,
     ) -> CompletionResponse: ...

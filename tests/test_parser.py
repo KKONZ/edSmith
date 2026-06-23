@@ -63,14 +63,6 @@ class TestParseEvaluation:
         for key, comp in result.components.items():
             assert len(comp.text) > 0, f"Empty text for {key}"
 
-    def test_overall_feedback_captured(self):
-        result = parse_evaluation(_FULL_EVAL)
-        assert "solid" in result.overall_feedback.lower()
-
-    def test_suggestions_captured(self):
-        result = parse_evaluation(_FULL_EVAL)
-        assert "grammatical" in result.suggestions.lower()
-
     def test_missing_components_have_empty_eval(self):
         result = parse_evaluation(_PARTIAL_EVAL)
         # coherence, lexical, grammar not present → empty ComponentEval

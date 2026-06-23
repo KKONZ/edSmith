@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 class ModelConfig(BaseModel):
     generator: str = "meta-llama/llama-3.1-8b-instruct"
     chair: str = "anthropic/claude-sonnet-4-5"
+    enable_thinking: bool = False
 
 
 class PromptPolicy(BaseModel):
@@ -27,6 +28,7 @@ class StrategyGuidance(BaseModel):
     use_complexity: bool = False
     use_discourse: bool = False
     contrastive_anchoring: bool = False
+    use_tool_calling: bool = False  # when True, tools are offered as API calls; when False, pre-injected as text
 
 
 class DiagnosticReport(BaseModel):
@@ -76,6 +78,7 @@ class SessionConfig(BaseModel):
     sampling: SamplingConfig = Field(default_factory=SamplingConfig)
     scorer: ScorerConfig = Field(default_factory=ScorerConfig)
     prompt_policies: dict[str, PromptPolicy] = Field(default_factory=dict)
+    strategy_guidance: StrategyGuidance = Field(default_factory=StrategyGuidance)
 
     def model_post_init(self, __context: Any) -> None:
         from edsmith.data.parser import COMPONENT_HEADINGS

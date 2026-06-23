@@ -47,6 +47,7 @@ def register_init_session(app: FastMCP):
             cfg = SessionConfig.from_yaml(config_path)
             state.models = cfg.models
             state.sampling = cfg.sampling
+            state.strategy_guidance = cfg.strategy_guidance
             for key in COMPONENT_HEADINGS:
                 state.policies[key] = cfg.prompt_policies.get(key, PromptPolicy())
             scorer_cfg = cfg.scorer.model_dump()
