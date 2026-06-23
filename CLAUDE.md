@@ -9,7 +9,7 @@ Use terms from `CONTEXT.md` exactly. Key ones: **Question** (not prompt/task), *
 ## Commands
 
 ```bash
-pip install -e ".[dev,tools]"      # install with dev + linguistic tool extras
+uv sync                            # install all dependencies
 pytest                             # run all tests (no API key needed)
 pytest tests/examiner/             # run a domain test directory
 edsmith init-config session.yaml   # write a fresh default config

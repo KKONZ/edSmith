@@ -7,7 +7,7 @@ Multi-agent generative feedback system for IELTS writing assessment. An Examiner
 **1. Install**
 
 ```bash
-pip install -e ".[dev,tools]"
+uv sync
 ```
 
 **2. Set environment variables**
@@ -28,8 +28,9 @@ edsmith init-config session.yaml
 Inside a Claude Code session, add the marketplace and install the plugin at user scope:
 
 ```
-/plugin marketplace add KKONZ/edSmith
-/plugin install edsmith@edsmith --scope user
+claude plugin marketplace add KKONZ/edSmith@master
+claude plugin marketplace update edsmith
+claude plugin install edsmith@edsmith
 ```
 
 After installing, reload and verify the MCP server is connected:

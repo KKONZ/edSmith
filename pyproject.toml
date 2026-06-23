@@ -20,15 +20,19 @@ dependencies = [
     "tqdm>=4.66",
     "mcp>=1.0",
     "fastmcp>=2.0",
+    "language-tool-python>=2.7",
+    "spacy>=3.7",
+    "en-core-web-sm @ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.7.1/en_core_web_sm-3.7.1-py3-none-any.whl",
 ]
 
 [project.scripts]
 edsmith = "edsmith.cli:app"
 
 [project.optional-dependencies]
-dev = ["pytest>=8.0"]
 training = ["coral-pytorch>=1.4", "transformers>=4.40"]  # install only in Colab GPU environment
-tools = ["language-tool-python>=2.7", "spacy>=3.7", "en-core-web-sm @ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.7.1/en_core_web_sm-3.7.1-py3-none-any.whl"]
+
+[dependency-groups]
+dev = ["pytest>=8.0"]
 
 [tool.hatch.metadata]
 allow-direct-references = true
