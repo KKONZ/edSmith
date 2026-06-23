@@ -54,3 +54,6 @@ Thumbs.db
 
 # Logs
 *.log
+
+# edsmith drive data (episodic records, model checkpoints — stays on Drive)
+edsmith_drive/

@@ -40,7 +40,7 @@ _ = register_reject_proposal(mcp)
 
 def main():
     try:
-        mcp.run(transport="http", port=8000)
+        mcp.run(transport="stdio")
     except (BrokenPipeError, EOFError):
         sys.exit(0)
     except Exception as e:
