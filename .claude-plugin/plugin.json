@@ -20,7 +20,8 @@
         "edsmith.mcp"
       ],
       "env": {
-        "PYTHONPATH": "${CLAUDE_PLUGIN_ROOT}/src"
+        "PYTHONPATH": "${CLAUDE_PLUGIN_ROOT}/src",
+        "EDSMITH_DRIVE_PATH": "${CLAUDE_PLUGIN_ROOT}/edsmith_drive"
       }
     }
   }
