@@ -21,7 +21,7 @@
       ],
       "env": {
         "PYTHONPATH": "${CLAUDE_PLUGIN_ROOT}/src",
-        "EDSMITH_DRIVE_PATH": "$CLAUDE_PROJECT_DIR/edsmith-data"
+        "EDSMITH_DRIVE_PATH": "$CLAUDE_PROJECT_DIR/edsmith_data"
       }
     }
   }
