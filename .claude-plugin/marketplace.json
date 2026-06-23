@@ -18,8 +18,8 @@
       "keywords": ["ielts", "writing", "assessment", "feedback", "mcp", "education"],
       "homepage": "https://github.com/KKONZ/edSmith",
       "source": {
-        "source": "github",
-        "repo": "KKONZ/edSmith"
+        "source": "url",
+        "url": "https://github.com/KKONZ/edSmith.git"
       }
     }
   ]
