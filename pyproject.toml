@@ -29,7 +29,7 @@ dependencies = [
 edsmith = "edsmith.cli:app"
 
 [project.optional-dependencies]
-training = ["coral-pytorch>=1.4", "transformers>=4.40"]  # install only in Colab GPU environment
+training = ["trl>=0.9", "transformers>=4.40"]  # install only in Colab GPU environment; unsloth installed separately in notebook
 
 [dependency-groups]
 dev = ["pytest>=8.0"]

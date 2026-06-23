@@ -85,10 +85,10 @@ def evaluate(
 # ------------------------------------------------------------------
 
 def _train(feedback_path: str, cfg: dict, output_dir: str) -> str:
-    from unsloth import FastLanguageModel  # must be first — patches transformers/torch
     import pandas as pd
     import torch
     from trl import SFTTrainer, SFTConfig
+    from unsloth import FastLanguageModel
 
     _log(f"Python {sys.version}")
     _log(f"Config: {cfg}")
@@ -164,8 +164,8 @@ def _train(feedback_path: str, cfg: dict, output_dir: str) -> str:
 # ------------------------------------------------------------------
 
 def _evaluate(model_path: str, eval_data_path: str) -> tuple[list[float], list[float]]:
-    from unsloth import FastLanguageModel  # must be first
     import numpy as np
+    from unsloth import FastLanguageModel
     import pandas as pd
     import torch
 
