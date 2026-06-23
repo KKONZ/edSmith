@@ -2,17 +2,12 @@
   "mcpServers": {
     "edsmith": {
       "command": "uv",
-      "args": [
-        "--directory",
-        "C:\\Users\\karlk\\Repos\\edSmith",
-        "run",
-        "-m",
-        "edsmith.mcp"
-      ],
-      "env": {
-        "PYTHONPATH": "C:\\Users\\karlk\\Repos\\edSmith\\src",
-        "EDSMITH_DRIVE_PATH": "C:\\Users\\karlk\\Repos\\edSmith\\edsmith_drive"
-      }
+      "args": ["run", "-m", "edsmith.mcp"]
+    },
+    "colab-mcp": {
+      "type": "stdio",
+      "command": "uvx",
+      "args": ["git+https://github.com/googlecolab/colab-mcp"]
     }
   }
 }
