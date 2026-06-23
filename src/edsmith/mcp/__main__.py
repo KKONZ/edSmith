@@ -9,6 +9,9 @@ or via the CLI:
 import logging
 import sys
 
+from dotenv import load_dotenv
+load_dotenv()
+
 logging.basicConfig(stream=sys.stderr, level=logging.WARNING)
 
 from fastmcp import FastMCP
