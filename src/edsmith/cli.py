@@ -124,6 +124,43 @@ def show_sessions(
 
 
 # ------------------------------------------------------------------
+# refresh-plugin
+# ------------------------------------------------------------------
+
+@app.command("refresh-plugin")
+def refresh_plugin() -> None:
+    """Sync .claude/settings.json into the Claude Code plugin cache."""
+    import json
+    import shutil
+
+    home = Path.home()
+    src = Path(__file__).resolve().parents[2] / ".claude" / "settings.json"
+
+    if not src.exists():
+        typer.echo(f"Source not found: {src}", err=True)
+        raise typer.Exit(1)
+
+    settings = json.loads(src.read_text())
+
+    cache_root = home / ".claude" / "plugins" / "cache" / "edsmith"
+    targets = list(cache_root.glob("**/.claude/settings.json")) if cache_root.exists() else []
+
+    marketplace = home / ".claude" / "plugins" / "marketplaces" / "edsmith" / ".claude" / "settings.json"
+    if marketplace.exists():
+        targets.append(marketplace)
+
+    if not targets:
+        typer.echo("No plugin cache entries found — nothing to refresh.")
+        raise typer.Exit()
+
+    for target in targets:
+        shutil.copy2(src, target)
+        typer.echo(f"Updated {target}")
+
+    typer.echo(f"\nRefreshed {len(targets)} cache file(s). Restart Claude Code to apply.")
+
+
+# ------------------------------------------------------------------
 # examiner-pass
 # ------------------------------------------------------------------
 
