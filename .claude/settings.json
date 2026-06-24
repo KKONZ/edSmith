@@ -1,9 +1,9 @@
 {
   "mcpServers": {
-    "colab-mcp": {
+    "colab-proxy-mcp": {
       "type": "stdio",
       "command": "uvx",
-      "args": ["git+https://github.com/googlecolab/colab-mcp"]
+      "args": ["git+https://github.com/SebastianGilPinzon/colab-mcp"]
     }
   }
 }
