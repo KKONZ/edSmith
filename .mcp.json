@@ -1,0 +1,18 @@
+{
+  "mcpServers": {
+    "edsmith": {
+      "command": "uv",
+      "args": [
+        "--directory",
+        "C:\\Users\\karlk\\Repos\\edSmith",
+        "run",
+        "-m",
+        "edsmith.mcp"
+      ]
+    },
+    "colab-proxy-mcp": {
+      "command": "uvx",
+      "args": ["--from", "git+https://github.com/SebastianGilPinzon/colab-mcp", "colab-mcp"]
+    }
+  }
+}

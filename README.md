@@ -23,29 +23,22 @@ export EDSMITH_DRIVE_PATH="/path/to/edsmith"   # local mirror of Google Drive fo
 edsmith init-config session.yaml
 ```
 
-**4. Install the Claude Code plugin**
+**4. Connect the MCP server**
 
-Inside a Claude Code session, add the marketplace and install the plugin at user scope:
+Add the edSmith server to `.claude/settings.local.json` (gitignored):
 
-```
-claude plugin marketplace add KKONZ/edSmith@master
-claude plugin marketplace update edsmith
-claude plugin install edsmith@edsmith
-```
-
-After installing, reload and verify the MCP server is connected:
-
-```
-/reload-plugins
-/mcp
+```json
+{
+  "mcpServers": {
+    "edsmith": {
+      "command": "uv",
+      "args": ["--directory", "/path/to/edSmith", "run", "-m", "edsmith.mcp"]
+    }
+  }
+}
 ```
 
-Updating to a new version: uninstall first, then reinstall:
-
-```
-/plugin uninstall edsmith@edsmith
-/plugin install edsmith@edsmith --scope user
-```
+Verify the connection with `/mcp` inside a Claude Code session.
 
 **5. Connect a Colab GPU runtime**
 
@@ -82,7 +75,7 @@ Two environments share a single Google Drive path:
 ```
 Local machine                        Colab GPU
 ─────────────────────────────────    ──────────────────────────────
-edSmith MCP server                   colab-mcp (official plugin)
+edSmith MCP server                   colab-mcp
   init_session                         notebooks/edsmith_training.ipynb
   run_chief_examiner                     Cell 2 — train Scorer
   approve_proposal / reject_proposal     Cell 3 — evaluate, save metrics
@@ -190,35 +183,6 @@ Strategy Guidance (which linguistic tools to inject, contrastive anchoring, per-
 
 ## Local development
 
-If you're developing the plugin locally and want source changes reflected immediately without reinstalling:
+The MCP server runs directly from the repo via `uv`, so source changes are reflected immediately — no reinstall step.
 
-**1. Create `.claude/settings.local.json`** (gitignored — never committed):
-
-```json
-{
-  "mcpServers": {
-    "plugin:edsmith:edsmith": {
-      "command": "uv",
-      "args": [
-        "--directory",
-        "C:\\Users\\...\\plugins\\cache\\edsmith\\edsmith\\0.1.0",
-        "run",
-        "-m",
-        "edsmith.mcp"
-      ],
-      "env": {
-        "EDSMITH_DEV_PATH": "C:\\path\\to\\edSmith\\src",
-        "EDSMITH_DRIVE_PATH": "C:\\Users\\...\\plugins\\cache\\edsmith\\edsmith\\0.1.0\\edsmith_drive"
-      }
-    }
-  }
-}
-```
-
-Replace `EDSMITH_DEV_PATH` with the absolute path to your local `src/` directory. The plugin cache path (`--directory` and `EDSMITH_DRIVE_PATH`) can be found by running:
-
-```
-claude plugin list
-```
-
-**How it works**: `src/edsmith/mcp/__main__.py` checks `EDSMITH_DEV_PATH` at startup and prepends it to `sys.path`, so the local source takes precedence over the installed package. The plugin's own venv still supplies all third-party dependencies.
+`.claude/settings.local.json` (gitignored) should point `--directory` at the repo root. Environment variables (`OPENROUTER_API_KEY`, `EDSMITH_DRIVE_PATH`) are loaded from `.env` in the repo root by `load_dotenv()` at startup.

@@ -1,9 +1,3 @@
 {
-  "mcpServers": {
-    "colab-proxy-mcp": {
-      "type": "stdio",
-      "command": "uvx",
-      "args": ["git+https://github.com/SebastianGilPinzon/colab-mcp"]
-    }
-  }
+  "enableAllProjectMcpServers": true
 }
