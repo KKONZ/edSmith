@@ -23,6 +23,41 @@ def _aoa_entry(word: str) -> dict | None:
     return _get_lookup().get(word.lower())
 
 
+def aoa_lookup(words: list[str]) -> ToolResult:
+    """Look up AoA, syllable count, and frequency for a specific list of words."""
+    lookup = _get_lookup()
+    details = []
+    missing = []
+    for w in words:
+        entry = lookup.get(w.lower())
+        if entry is not None:
+            details.append({"word": w.lower(), **entry})
+        else:
+            missing.append(w.lower())
+
+    aoa_vals = [d["aoa"] for d in details]
+    stats: dict[str, float] = {"found": len(details), "missing": len(missing)}
+    if aoa_vals:
+        import statistics
+        stats["aoa_mean"] = statistics.mean(aoa_vals)
+        stats["aoa_min"] = min(aoa_vals)
+        stats["aoa_max"] = max(aoa_vals)
+
+    summary_parts = [f"{len(details)}/{len(words)} words found in AoA lookup"]
+    if missing:
+        summary_parts.append(f"not found: {', '.join(missing)}")
+    if aoa_vals:
+        summary_parts.append(f"mean AoA {stats['aoa_mean']:.2f} (range {stats['aoa_min']:.1f}–{stats['aoa_max']:.1f})")
+
+    return ToolResult(
+        tool="aoa_lookup",
+        count=len(details),
+        stats=stats,
+        details=details,
+        summary="; ".join(summary_parts),
+    )
+
+
 def compute_aoa_stats(text: str) -> ToolResult:
     if not text.strip():
         return ToolResult(

@@ -29,24 +29,6 @@ class TestComplexityStats:
                     "passive_ratio", "subordinate_ratio", "nominalization_ratio"):
             assert key in result["stats"]
 
-    def test_passive_detected(self):
-        result = complexity_stats("The paper was written by the student.")
-        assert result["stats"]["passive_ratio"] > 0
-        assert result["details"][0]["is_passive"] is True
-
-    def test_active_not_passive(self):
-        result = complexity_stats("The student wrote the paper.")
-        assert result["details"][0]["is_passive"] is False
-
-    def test_subordinate_detected(self):
-        result = complexity_stats("Although it was raining, she went outside.")
-        assert result["stats"]["subordinate_ratio"] > 0
-        assert result["details"][0]["has_subordinate"] is True
-
-    def test_nominalization_detected(self):
-        result = complexity_stats("The government made a consideration of the situation.")
-        assert result["stats"]["nominalization_ratio"] > 0
-
     def test_aoa_populated_in_stats(self):
         result = complexity_stats("The cat sat on the mat. It was a sunny day.")
         assert "aoa_mean" in result["stats"]

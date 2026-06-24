@@ -83,11 +83,58 @@ _DISCOURSE = {
     },
 }
 
+_AOA_LOOKUP = {
+    "type": "function",
+    "function": {
+        "name": "aoa_lookup",
+        "description": (
+            "Look up age-of-acquisition (AoA), syllable count, and frequency for a specific "
+            "list of words. Use this when you want to check whether particular words the "
+            "writer chose are basic or advanced — e.g. after spotting an interesting "
+            "collocation or an unusually sophisticated/simple word choice."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "words": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "List of individual words to look up.",
+                },
+            },
+            "required": ["words"],
+        },
+    },
+}
+
+_POS = {
+    "type": "function",
+    "function": {
+        "name": "pos_tag",
+        "description": (
+            "POS-tag a piece of text with spaCy. Returns per-token part-of-speech, "
+            "fine-grained tag, syntactic dependency relation, and lemma. Call this on "
+            "specific sentences to understand grammatical structure — e.g. to check "
+            "whether the writer uses subordinate clauses, varied verb forms, or relies "
+            "heavily on simple noun phrases."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "text": {"type": "string", "description": "Text to tag (sentence or paragraph)."},
+            },
+            "required": ["text"],
+        },
+    },
+}
+
 _ALL = {
     "aoa_stats": _AOA,
+    "aoa_lookup": _AOA_LOOKUP,
     "grammar_check": _GRAMMAR,
     "complexity_stats": _COMPLEXITY,
     "discourse_analysis": _DISCOURSE,
+    "pos_tag": _POS,
 }
 
 
@@ -96,13 +143,29 @@ def get_tool_definitions(strategy: StrategyGuidance) -> list[dict]:
     tools = []
     if strategy.use_aoa:
         tools.append(_AOA)
+        tools.append(_AOA_LOOKUP)
     if strategy.use_grammar:
         tools.append(_GRAMMAR)
     if strategy.use_complexity:
         tools.append(_COMPLEXITY)
     if strategy.use_discourse:
         tools.append(_DISCOURSE)
+    if strategy.use_pos:
+        tools.append(_POS)
     return tools
+
+
+def _trim_result(result: dict, max_details: int = 10) -> dict:
+    """Keep summary + stats but cap the details list to avoid context bloat."""
+    trimmed = {k: v for k, v in result.items() if k != "details"}
+    details = result.get("details", [])
+    if len(details) > max_details:
+        half = max_details // 2
+        trimmed["details"] = details[:half] + details[-half:]
+        trimmed["details_truncated"] = f"{len(details) - max_details} entries omitted (showing first/last {half})"
+    else:
+        trimmed["details"] = details
+    return trimmed
 
 
 def execute_tool(name: str, arguments: str) -> str:
@@ -113,7 +176,16 @@ def execute_tool(name: str, arguments: str) -> str:
 
         if name == "aoa_stats":
             from edsmith.tools.aoa import compute_aoa_stats
-            result = compute_aoa_stats(text)
+            result = _trim_result(compute_aoa_stats(text))
+        elif name == "aoa_lookup":
+            from edsmith.tools.aoa import aoa_lookup
+            words = args.get("words", [])
+            if not isinstance(words, list):
+                words = [words] if words else []
+            result = aoa_lookup(words)
+        elif name == "pos_tag":
+            from edsmith.tools.pos import pos_tag
+            result = _trim_result(pos_tag(text), max_details=20)
         elif name == "grammar_check":
             from edsmith.tools.grammar import grammar_check
             result = grammar_check(text)

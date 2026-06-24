@@ -35,6 +35,7 @@ strategy_guidance:
   use_discourse: false
   contrastive_anchoring: false
   per_component_focus: {}
+  use_pos: true
   use_tool_calling: true
 scorer:
   component: null

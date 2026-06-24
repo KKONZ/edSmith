@@ -16,6 +16,16 @@ from edsmith.providers.base import LLMProvider
 from edsmith.session.state import load_state
 
 
+def _parse_band(val) -> float | None:
+    """Convert band column to float, returning None for unparseable values like '<4'."""
+    if val is None:
+        return None
+    try:
+        return float(val)
+    except (ValueError, TypeError):
+        return None
+
+
 def _ensure_session_data(drive_path: Path, session_id: str, state) -> pd.DataFrame:
     data_dir = drive_path / "sessions" / session_id / "data"
     train_path = data_dir / "train.parquet"
@@ -166,7 +176,7 @@ async def run_examiner_pass(
                     strategy=state.strategy_guidance,
                     provider=provider,
                     model_config=state.models,
-                    band=row.get("band"),
+                    band=_parse_band(row.get("band")),
                 )
                 for component, fb in feedbacks.items():
                     records.append({
@@ -177,12 +187,13 @@ async def run_examiner_pass(
                         "feedback_text": fb.feedback,
                         "score": fb.score,
                         "tag": fb.tag,
+                        "calibration_delta": fb.calibration_delta,
                     })
                     logger.debug(f"OK  component={component} score={fb.score}")
             except Exception as exc:
                 msg = f"Essay failed: {exc}"
                 warnings.append(msg)
-                logger.warning(msg)
+                logger.warning(msg, exc_info=True)
             finally:
                 pbar.update(1)
 

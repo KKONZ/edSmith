@@ -88,6 +88,24 @@ See `agents/examiner.md` for full field reference.
 
 ---
 
+### Step 1b — Human gate: confirm Colab is ready
+
+**Stop here.** Do not proceed to Step 2 until the human confirms Colab is ready.
+
+Tell the human:
+
+> "Examiner pass complete. Before I kick off training, please:
+> 1. Open `notebooks/edsmith_training.ipynb` in Colab
+> 2. Set the runtime to GPU (Runtime → Change runtime type → T4 GPU)
+> 3. Run **Cell 1** — it mounts Drive, installs dependencies, sets `EDSMITH_DRIVE_PATH`
+> 4. Reply when Cell 1 is done and colab-mcp is connected"
+
+Wait for the human to reply before continuing. Do not call any Colab tools until you receive confirmation.
+
+If colab-mcp is not listed as a connected MCP server at that point, remind the human to start it locally: `uvx git+https://github.com/googlecolab/colab-mcp`.
+
+---
+
 ### Step 2 — Train Scorer (Colab)
 
 Prepend variable assignments and call `run_cell` on Cell 2 of the notebook:

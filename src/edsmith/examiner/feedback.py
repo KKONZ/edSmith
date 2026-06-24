@@ -25,7 +25,8 @@ class ComponentFeedback:
     component: str
     feedback: str
     score: float | None
-    tag: str | None   # LLM self-assessment, e.g. confidence level
+    tag: str | None        # LLM self-assessment, e.g. confidence level
+    calibration_delta: float = 0.0  # score adjustment applied during calibration (0.0 = none)
 
 
 # ---------------------------------------------------------------------------
@@ -227,6 +228,106 @@ async def _generate_component(
 
 
 # ---------------------------------------------------------------------------
+# Score calibration (post-gather reflection pass)
+# ---------------------------------------------------------------------------
+
+_CALIBRATION_SYSTEM = """\
+You are a senior IELTS examiner reviewing a set of component scores for consistency.
+You are given four component scores and brief feedback excerpts, plus the verified
+overall band for the essay. The four component scores must average to the overall band.
+
+Identify which component score(s) should be adjusted (changing by 0.5–1.0 band steps
+is normal; avoid large swings). For each adjusted component, provide a one-sentence
+note explaining why the score was changed.
+
+Respond ONLY with a JSON object inside <calibration> tags, nothing else:
+<calibration>
+{
+  "adjustments": {
+    "<component_key>": {"score": <new_score>, "note": "<one sentence>"}
+  }
+}
+</calibration>
+Only include components that need adjustment. If none are needed, return {"adjustments": {}}.
+Valid component keys: task_response, coherence, lexical, grammar.
+Scores must be 0–9 in 0.5 increments.
+"""
+
+
+async def _reflect_and_calibrate(
+    feedbacks: dict[str, ComponentFeedback],
+    band: float,
+    provider: LLMProvider,
+    model: str,
+    enable_thinking: bool,
+) -> dict[str, ComponentFeedback]:
+    import json as _json
+
+    scores = {k: fb.score for k, fb in feedbacks.items() if fb.score is not None}
+    if len(scores) < 4:
+        return feedbacks
+
+    avg = sum(scores.values()) / 4
+    if abs(avg - band) <= 0.25:
+        return feedbacks
+
+    logger.debug("calibration triggered avg=%.2f target=%s delta=%.2f", avg, band, avg - band)
+
+    summaries = []
+    for comp, fb in feedbacks.items():
+        heading = COMPONENT_HEADINGS[comp]
+        excerpt = (fb.feedback or "")[:300].strip().replace("\n", " ")
+        summaries.append(f"{heading} (key={comp}): score={fb.score}\n  Excerpt: {excerpt}")
+
+    user_content = (
+        f"Verified overall band: {band}\n"
+        f"Current component scores: {scores}\n"
+        f"Current average: {avg:.2f}  |  Target: {band}  |  Delta: {avg - band:+.2f}\n\n"
+        + "\n\n".join(summaries)
+    )
+
+    messages = [
+        Message(role="system", content=_CALIBRATION_SYSTEM),
+        Message(role="user", content=user_content),
+    ]
+
+    try:
+        response = await provider.acomplete(messages, model=model, enable_thinking=enable_thinking)
+        m = re.search(r"<calibration>(.*?)</calibration>", response.content, re.DOTALL | re.IGNORECASE)
+        if not m:
+            return feedbacks
+        data = _json.loads(m.group(1))
+        adjustments = data.get("adjustments", {})
+    except Exception as exc:
+        logger.warning("calibration failed: %s", exc)
+        return feedbacks
+
+    result = dict(feedbacks)
+    for comp, adj in adjustments.items():
+        if comp not in result:
+            continue
+        try:
+            new_score = float(adj["score"])
+            if not (0.0 <= new_score <= 9.0):
+                continue
+        except (KeyError, TypeError, ValueError):
+            continue
+        note = adj.get("note", "")
+        old_fb = result[comp]
+        logger.debug("calibration %s: %.1f → %.1f  %s", comp, old_fb.score, new_score, note)
+        delta = round(new_score - (old_fb.score or 0.0), 2)
+        result[comp] = ComponentFeedback(
+            component=comp,
+            feedback=old_fb.feedback + f"\n\n[Score calibrated from {old_fb.score} to {new_score}: {note}]",
+            score=new_score,
+            tag=old_fb.tag,
+            calibration_delta=delta,
+        )
+
+    return result
+
+
+# ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
 
@@ -268,4 +369,15 @@ async def generate_feedback(
     ]
 
     results = await asyncio.gather(*tasks)
-    return {fb.component: fb for fb in results}
+    feedbacks = {fb.component: fb for fb in results}
+
+    if band is not None:
+        feedbacks = await _reflect_and_calibrate(
+            feedbacks=feedbacks,
+            band=band,
+            provider=provider,
+            model=model_config.generator,
+            enable_thinking=model_config.enable_thinking,
+        )
+
+    return feedbacks
