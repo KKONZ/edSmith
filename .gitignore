@@ -48,6 +48,9 @@ coverage.xml
 .idea/
 *.iml
 
+# Local Claude Code overrides (machine-specific)
+.claude/settings.local.json
+
 # OS
 .DS_Store
 Thumbs.db

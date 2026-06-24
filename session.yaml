@@ -25,9 +25,9 @@ prompt_policies:
     specificity: 2
 sampling:
   random_state: 42
-  size: 12
-  test_ratio: 0.15
-  validation_ratio: 0.15
+  size: 20
+  test_ratio: 0.1
+  validation_ratio: 0.1
 strategy_guidance:
   use_aoa: true
   use_grammar: true

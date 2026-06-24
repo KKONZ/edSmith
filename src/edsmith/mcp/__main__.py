@@ -7,7 +7,14 @@ or via the CLI:
 """
 
 import logging
+import os
 import sys
+
+# Allow local dev to override the installed package without reinstalling the plugin.
+# Set EDSMITH_DEV_PATH to the repo's src/ directory in .claude/settings.local.json.
+_dev_path = os.environ.get("EDSMITH_DEV_PATH")
+if _dev_path:
+    sys.path.insert(0, _dev_path)
 
 from dotenv import load_dotenv
 load_dotenv()
