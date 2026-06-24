@@ -30,10 +30,16 @@ def grammar_check(text: str) -> ToolResult:
     for m in matches:
         span = text[m.offset : m.offset + m.error_length].strip()
         word = span.lower().split()[0] if span else ""
-        entry = _aoa_entry(word) if word else None
-        # If AoA not found (e.g. British spelling), try single replacement (e.g. favour→favor)
-        if entry is None and len(m.replacements) == 1:
-            entry = _aoa_entry(m.replacements[0].lower().split()[0])
+        is_word = bool(word and any(c.isalpha() for c in word))
+        entry = _aoa_entry(word) if is_word else None
+        # If AoA not found for a real word (e.g. British spelling), try first replacement then singular
+        if entry is None and is_word and m.replacements:
+            rep_tokens = m.replacements[0].lower().split()
+            if rep_tokens:
+                rep = rep_tokens[0]
+                entry = _aoa_entry(rep)
+                if entry is None and rep.endswith("s"):
+                    entry = _aoa_entry(rep[:-1])
         details.append({
             "message": m.message,
             "word": span,

@@ -37,7 +37,7 @@ def aoa_lookup(words: list[str]) -> ToolResult:
     missing = []
 
     for w in words:
-        key = w.lower()
+        key = str(w).lower()
         entry = lookup.get(key)
         if entry is not None:
             details.append({"word": key, **entry})

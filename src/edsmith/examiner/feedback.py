@@ -366,14 +366,18 @@ async def generate_feedback(
     provider: LLMProvider,
     model_config: ModelConfig,
     band: float | None = None,
+    components: list[str] | None = None,
 ) -> dict[str, ComponentFeedback]:
     """Generate per-component feedback for a single essay.
 
+    components — subset of COMPONENT_HEADINGS to run; defaults to all four.
     When strategy.use_tool_calling is False, linguistic tools are collected once
     (in a thread) before launching concurrent per-component LLM calls.
     When True, tools are passed as API function definitions and the LLM calls
     them dynamically during its reasoning.
     """
+    active_components = components if components else list(COMPONENT_HEADINGS.keys())
+
     if strategy.use_tool_calling:
         tool_context = ""
     else:
@@ -392,13 +396,13 @@ async def generate_feedback(
             band=band,
             enable_thinking=model_config.enable_thinking,
         )
-        for component in COMPONENT_HEADINGS
+        for component in active_components
     ]
 
     results = await asyncio.gather(*tasks)
     feedbacks = {fb.component: fb for fb in results}
 
-    if band is not None:
+    if band is not None and len(active_components) == 4:
         feedbacks = await _reflect_and_calibrate(
             feedbacks=feedbacks,
             band=band,

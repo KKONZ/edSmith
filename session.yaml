@@ -35,10 +35,9 @@ strategy_guidance:
   use_discourse: false
   contrastive_anchoring: false
   per_component_focus: {}
-  use_pos: true
   use_tool_calling: true
 scorer:
-  component: null
+  component: grammar
   gradient_accumulation_steps: 4
   learning_rate: 0.0002
   load_in_4bit: true

@@ -22,7 +22,7 @@ class SessionState(BaseModel):
     strategy_guidance: StrategyGuidance = Field(default_factory=StrategyGuidance)
     models: ModelConfig = Field(default_factory=ModelConfig)
     sampling: SamplingConfig = Field(default_factory=SamplingConfig)
-    model_path: str | None = None
+    model_paths: dict[str, str] = Field(default_factory=dict)
     parent_session_id: str | None = None
 
 

@@ -161,8 +161,17 @@ async def run_examiner_pass(
     provider — inject an LLMProvider for testing; defaults to OpenRouterProvider.
     progress — show tqdm bar and INFO logs on stderr (default True).
     """
+    import json as _json
+
     state = load_state(drive_path, session_id)
     train_df = await asyncio.to_thread(_ensure_session_data, drive_path, session_id, state)
+
+    # Read scorer component filter from scorer_config.json if present
+    scorer_cfg_path = drive_path / "sessions" / session_id / "scorer_config.json"
+    _scorer_component: str | None = None
+    if scorer_cfg_path.exists():
+        _scorer_component = _json.loads(scorer_cfg_path.read_text()).get("component")
+    active_components: list[str] | None = [_scorer_component] if _scorer_component else None
 
     if provider is None:
         from edsmith.providers.openrouter import OpenRouterProvider
@@ -177,7 +186,8 @@ async def run_examiner_pass(
     records: list[dict] = []
     warnings: list[str] = []
 
-    logger.info(f"Starting examiner pass — session={session_id} iteration={iteration} essays={n_essays} model={state.models.generator}")
+    components_label = _scorer_component or "all"
+    logger.info(f"Starting examiner pass — session={session_id} iteration={iteration} essays={n_essays} model={state.models.generator} components={components_label}")
 
     pbar = tqdm(total=n_essays, disable=not progress, file=sys.stderr, desc="essays", unit="essay")
 
@@ -192,6 +202,7 @@ async def run_examiner_pass(
                     provider=provider,
                     model_config=state.models,
                     band=_parse_band(row.get("band")),
+                    components=active_components,
                 )
                 for component, fb in feedbacks.items():
                     records.append({

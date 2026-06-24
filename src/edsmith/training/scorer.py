@@ -16,6 +16,10 @@ _BANDS: list[float] = [b / 2 for b in range(2, 19)]  # 1.0 … 9.0  (17 values)
 _BAND_TO_IDX: dict[float, int] = {b: i for i, b in enumerate(_BANDS)}
 _EVAL_BATCH_SIZE = 8
 
+# Components trained as separate models in multi-component mode.
+# task_response is excluded: its score correlates directly with the overall band.
+_SCORER_COMPONENTS = ["coherence", "lexical", "grammar"]
+
 
 def _log(msg: str) -> None:
     print(f"[edsmith-train] {msg}", flush=True, file=sys.stderr)
@@ -39,17 +43,20 @@ def _default_config() -> dict:
 # Public API
 # ------------------------------------------------------------------
 
-def train(session_id: str, iteration: int, drive_path: Path, cfg: dict | None = None) -> str:
-    """Fine-tune Scorer on Phase 1 feedback for this iteration.
+def train(session_id: str, iteration: int, drive_path: Path, cfg: dict | None = None) -> dict[str, str]:
+    """Fine-tune Scorer on feedback for this iteration.
+
+    Single-component mode (cfg["component"] set): trains one model.
+    Multi-component mode (cfg["component"] is None): trains one model per
+    component in _SCORER_COMPONENTS (coherence, lexical, grammar).
 
     Reads:  {drive_path}/sessions/{session_id}/feedback_iter{n}.parquet
-            {drive_path}/sessions/{session_id}/scorer_config.json  (written by init_session)
-    Writes: {drive_path}/sessions/{session_id}/models/iter{n}/
-    Returns the model path.
+            {drive_path}/sessions/{session_id}/scorer_config.json
+    Writes: {drive_path}/sessions/{session_id}/models/iter{n}/{component}/
+    Returns dict mapping component name → model path.
     """
     session_dir = drive_path / "sessions" / session_id
     feedback_path = session_dir / f"feedback_iter{iteration}.parquet"
-    output_dir = str(session_dir / "models" / f"iter{iteration}")
 
     if cfg is None:
         scorer_cfg_path = session_dir / "scorer_config.json"
@@ -59,7 +66,16 @@ def train(session_id: str, iteration: int, drive_path: Path, cfg: dict | None = 
         else:
             cfg = _default_config()
 
-    return _train(str(feedback_path), cfg, output_dir)
+    component = cfg.get("component")
+    components_to_train = [component] if component else _SCORER_COMPONENTS
+
+    model_paths: dict[str, str] = {}
+    for comp in components_to_train:
+        output_dir = str(session_dir / "models" / f"iter{iteration}" / comp)
+        comp_cfg = {**cfg, "component": comp}
+        model_paths[comp] = _train(str(feedback_path), comp_cfg, output_dir)
+
+    return model_paths
 
 
 def evaluate(
@@ -70,14 +86,60 @@ def evaluate(
 ) -> tuple[list[float], list[float]]:
     """Evaluate Scorer on val or test split.
 
-    Reads:  {drive_path}/sessions/{session_id}/models/iter{n}/
+    Auto-detects single vs multi-component from the models directory structure.
+    Multi-component: loads each component model, averages predictions for band.
+
+    Reads:  {drive_path}/sessions/{session_id}/models/iter{n}/{component}/
             {drive_path}/sessions/{session_id}/data/{split}.parquet
     Returns (y_true, y_pred).
     """
     session_dir = drive_path / "sessions" / session_id
-    model_path = str(session_dir / "models" / f"iter{iteration}")
+    models_dir = session_dir / "models" / f"iter{iteration}"
     data_path = str(session_dir / "data" / f"{split}.parquet")
-    return _evaluate(model_path, data_path)
+
+    # Detect component subdirectories
+    component_dirs = {
+        d.name: str(d)
+        for d in sorted(models_dir.iterdir())
+        if d.is_dir() and d.name in (*_SCORER_COMPONENTS, "task_response")
+    } if models_dir.exists() else {}
+
+    if not component_dirs:
+        # Legacy: single model at iter root
+        return _evaluate(str(models_dir), data_path)
+
+    if len(component_dirs) == 1:
+        comp, path = next(iter(component_dirs.items()))
+        return _evaluate(path, data_path, component=comp)
+
+    # Multi-component: evaluate each model, average predictions per essay
+    import pandas as pd
+    import numpy as np
+
+    df = pd.read_parquet(data_path)
+    valid_rows = [row for _, row in df.iterrows() if _parse_band_val(row.get("band")) is not None]
+    y_true = [_parse_band_val(row["band"]) for row in valid_rows]
+
+    per_component_preds: dict[str, list[float]] = {}
+    for comp, path in component_dirs.items():
+        _, comp_preds = _evaluate(path, data_path, component=comp)
+        per_component_preds[comp] = comp_preds
+
+    # Average across components per essay
+    n = min(len(v) for v in per_component_preds.values())
+    y_pred = [
+        round(float(np.mean([per_component_preds[c][i] for c in component_dirs])) * 2) / 2
+        for i in range(n)
+    ]
+    y_true = y_true[:n]
+    return y_true, y_pred
+
+
+def _parse_band_val(val) -> float | None:
+    try:
+        return float(str(val).strip())
+    except (ValueError, TypeError):
+        return None
 
 
 # ------------------------------------------------------------------
@@ -163,7 +225,7 @@ def _train(feedback_path: str, cfg: dict, output_dir: str) -> str:
 # Evaluation implementation
 # ------------------------------------------------------------------
 
-def _evaluate(model_path: str, eval_data_path: str) -> tuple[list[float], list[float]]:
+def _evaluate(model_path: str, eval_data_path: str, component: str | None = None) -> tuple[list[float], list[float]]:
     import numpy as np
     from unsloth import FastLanguageModel
     import pandas as pd
@@ -171,8 +233,7 @@ def _evaluate(model_path: str, eval_data_path: str) -> tuple[list[float], list[f
 
     _log(f"Evaluating model at {model_path} …")
     edsmith_cfg_path = Path(model_path) / "edsmith_config.json"
-    component: str | None = None
-    if edsmith_cfg_path.exists():
+    if component is None and edsmith_cfg_path.exists():
         component = json.loads(edsmith_cfg_path.read_text()).get("component")
     _log(f"Component: {component or 'all'}")
     df = pd.read_parquet(eval_data_path)

@@ -106,14 +106,20 @@ def train_test_split(
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Carve a fixed validation set from the training DataFrame.
 
-    The validation set is stratified by band score so all grade levels are
-    represented.  The remaining rows form the working training set for the
-    session.  Both splits are fixed for the duration of a session to eliminate
-    random effects across iterations.
+    Stratified by band when the dataset is large enough. Falls back to simple
+    random split when stratification would yield an empty val set (small datasets).
     """
     val_idx: list[int] = []
     for _, group in df.groupby("band"):
-        val_idx.extend(group.sample(frac=validation_ratio, random_state=random_state).index.tolist())
+        n_val = max(0, round(len(group) * validation_ratio))
+        if n_val > 0:
+            val_idx.extend(group.sample(n=n_val, random_state=random_state).index.tolist())
+
+    # Fallback: if stratification yielded nothing, take a simple random slice
+    if not val_idx:
+        n_val = max(1, round(len(df) * validation_ratio))
+        val_idx = df.sample(n=min(n_val, len(df)), random_state=random_state).index.tolist()
+
     val = df.loc[val_idx].reset_index(drop=True)
     train = df.drop(val_idx).reset_index(drop=True)
     return train, val
