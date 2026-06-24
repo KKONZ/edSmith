@@ -17,11 +17,18 @@ from edsmith.session.state import load_state
 
 
 def _parse_band(val) -> float | None:
-    """Convert band column to float, returning None for unparseable values like '<4'."""
+    """Convert band column to float.
+
+    '<4' is treated as 3.5 so calibration still fires for below-band-4 essays.
+    Returns None only for truly unparseable values.
+    """
     if val is None:
         return None
+    s = str(val).strip()
+    if s == "<4":
+        return 3.5
     try:
-        return float(val)
+        return float(s)
     except (ValueError, TypeError):
         return None
 

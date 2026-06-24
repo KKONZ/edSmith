@@ -111,13 +111,6 @@ def _build_messages(
 
     system_parts.append(get_band_descriptors(component))
 
-    if band is not None:
-        system_parts.append(
-            f"The verified overall IELTS band for this essay is {band}. "
-            f"Your score for '{heading}' must be consistent with this — "
-            f"the four component scores average to the overall band."
-        )
-
     if policy.evidence_required:
         system_parts.append(
             "Cite specific evidence from the essay to support every point you make."
@@ -142,6 +135,18 @@ def _build_messages(
         system_parts.append(
             "You have access to linguistic analysis tools. Call them on the full essay "
             "or specific excerpts to gather objective evidence before writing your assessment."
+        )
+        system_parts.append(
+            "When using grammar and vocabulary tools together:\n"
+            "- If `aoa_lookup` returns 'not found' for a word, consider whether it is a "
+            "misspelling. Use your own language understanding to infer what the writer most "
+            "likely intended, then call `aoa_lookup` again with the corrected spelling. "
+            "Report both the misspelling and your inferred intended word in your feedback.\n"
+            "- Beyond counting surface errors, assess **comprehension impact**: does any "
+            "error or pattern of errors make a sentence ambiguous or unintelligible — i.e. "
+            "a reader cannot confidently reconstruct what the writer meant? Flag these "
+            "explicitly. This is a more serious penalty than errors that do not obscure "
+            "meaning, and no tool can judge it for you — use your own language understanding."
         )
     elif tool_context:
         system_parts.append(f"\nLinguistic analysis findings (for reference):\n{tool_context}")

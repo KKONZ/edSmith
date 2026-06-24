@@ -41,6 +41,13 @@ def load_ielts(split: str = "train") -> pd.DataFrame:
     ds = load_dataset(_HF_DATASET, split=split, cache_dir=str(_DATASET_CACHE))
     df = ds.to_pandas().rename(columns=_COLUMN_MAP)
     df["band"] = df["band"].str.strip()
+    # Drop rows with missing question or essay — null content causes API errors downstream
+    before = len(df)
+    df = df.dropna(subset=["question", "essay"]).reset_index(drop=True)
+    df = df[df["question"].str.strip().ne("") & df["essay"].str.strip().ne("")].reset_index(drop=True)
+    if len(df) < before:
+        import logging
+        logging.getLogger(__name__).warning("Dropped %d rows with null/empty question or essay", before - len(df))
     return df
 
 

@@ -24,10 +24,16 @@ def _aoa_entry(word: str) -> dict | None:
 
 
 def aoa_lookup(words: list[str]) -> ToolResult:
-    """Look up AoA, syllable count, and frequency for a specific list of words."""
+    """Look up AoA, syllable count, and frequency for a specific list of words.
+
+    If a word is not found, it may be a misspelling. Use your language understanding
+    to infer what the writer most likely intended, then call this tool again with the
+    corrected spelling to get its AoA and vocabulary level.
+    """
     lookup = _get_lookup()
     details = []
     missing = []
+
     for w in words:
         entry = lookup.get(w.lower())
         if entry is not None:
@@ -45,7 +51,7 @@ def aoa_lookup(words: list[str]) -> ToolResult:
 
     summary_parts = [f"{len(details)}/{len(words)} words found in AoA lookup"]
     if missing:
-        summary_parts.append(f"not found: {', '.join(missing)}")
+        summary_parts.append(f"not found (possible misspellings — infer intended word and retry): {', '.join(missing)}")
     if aoa_vals:
         summary_parts.append(f"mean AoA {stats['aoa_mean']:.2f} (range {stats['aoa_min']:.1f}–{stats['aoa_max']:.1f})")
 

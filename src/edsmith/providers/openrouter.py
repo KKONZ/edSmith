@@ -89,6 +89,11 @@ class OpenRouterProvider(LLMProvider):
 
     @staticmethod
     def _parse(response) -> CompletionResponse:
+        if not response.choices:
+            raise RuntimeError(
+                f"OpenRouter returned no choices (model={response.model!r}). "
+                "Possible causes: null/empty content in the request, rate limit, or provider error."
+            )
         choice = response.choices[0]
         usage = response.usage
 

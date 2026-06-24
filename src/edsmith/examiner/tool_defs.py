@@ -182,19 +182,19 @@ def execute_tool(name: str, arguments: str) -> str:
             words = args.get("words", [])
             if not isinstance(words, list):
                 words = [words] if words else []
-            result = aoa_lookup(words)
+            result = _trim_result(aoa_lookup(words), max_details=20)
         elif name == "pos_tag":
             from edsmith.tools.pos import pos_tag
             result = _trim_result(pos_tag(text), max_details=20)
         elif name == "grammar_check":
             from edsmith.tools.grammar import grammar_check
-            result = grammar_check(text)
+            result = _trim_result(grammar_check(text), max_details=15)
         elif name == "complexity_stats":
             from edsmith.tools.complexity import complexity_stats
-            result = complexity_stats(text)
+            result = _trim_result(complexity_stats(text), max_details=15)
         elif name == "discourse_analysis":
             from edsmith.tools.discourse import discourse_analysis
-            result = discourse_analysis(text)
+            result = _trim_result(discourse_analysis(text), max_details=10)
         else:
             return json.dumps({"error": f"Unknown tool: {name}"})
 
