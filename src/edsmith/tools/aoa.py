@@ -26,20 +26,35 @@ def _aoa_entry(word: str) -> dict | None:
 def aoa_lookup(words: list[str]) -> ToolResult:
     """Look up AoA, syllable count, and frequency for a specific list of words.
 
-    If a word is not found, it may be a misspelling. Use your language understanding
-    to infer what the writer most likely intended, then call this tool again with the
-    corrected spelling to get its AoA and vocabulary level.
+    If a word is not found exactly, up to 3 close spelling matches are returned with
+    their AoA values so you can pick the one that best fits the writer's intent and
+    vocabulary level given the surrounding essay context.
     """
+    import difflib
+
     lookup = _get_lookup()
     details = []
     missing = []
 
     for w in words:
-        entry = lookup.get(w.lower())
+        key = w.lower()
+        entry = lookup.get(key)
         if entry is not None:
-            details.append({"word": w.lower(), **entry})
+            details.append({"word": key, **entry})
         else:
-            missing.append(w.lower())
+            candidates = difflib.get_close_matches(key, lookup.keys(), n=3, cutoff=0.75)
+            if candidates:
+                details.append({
+                    "word": key,
+                    "found": False,
+                    "close_matches": [
+                        {"word": c, "aoa": lookup[c].get("aoa"), "nsyll": lookup[c].get("nsyll")}
+                        for c in candidates
+                    ],
+                    "note": "Not found — pick the close match that best fits the writer's intent and vocabulary level",
+                })
+            else:
+                missing.append(key)
 
     aoa_vals = [d["aoa"] for d in details]
     stats: dict[str, float] = {"found": len(details), "missing": len(missing)}
@@ -49,9 +64,11 @@ def aoa_lookup(words: list[str]) -> ToolResult:
         stats["aoa_min"] = min(aoa_vals)
         stats["aoa_max"] = max(aoa_vals)
 
-    summary_parts = [f"{len(details)}/{len(words)} words found in AoA lookup"]
+    found_exact = sum(1 for d in details if d.get("found", True))
+    found_approx = sum(1 for d in details if not d.get("found", True))
+    summary_parts = [f"{found_exact} exact, {found_approx} approximate matches; {len(missing)} not found"]
     if missing:
-        summary_parts.append(f"not found (possible misspellings — infer intended word and retry): {', '.join(missing)}")
+        summary_parts.append(f"no candidates for: {', '.join(missing)}")
     if aoa_vals:
         summary_parts.append(f"mean AoA {stats['aoa_mean']:.2f} (range {stats['aoa_min']:.1f}–{stats['aoa_max']:.1f})")
 
