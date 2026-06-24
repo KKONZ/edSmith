@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import sys
 from pathlib import Path
 
@@ -14,6 +15,13 @@ from edsmith.data.parser import COMPONENT_HEADINGS
 from edsmith.examiner.feedback import generate_feedback
 from edsmith.providers.base import LLMProvider
 from edsmith.session.state import load_state
+
+_STRIP_TAGS = re.compile(r"<(score|confidence)>.*?</\1>", re.IGNORECASE | re.DOTALL)
+
+
+def _clean_feedback(text: str) -> str:
+    """Strip structured output tags from feedback prose before saving."""
+    return _STRIP_TAGS.sub("", text).strip()
 
 
 def _parse_band(val) -> float | None:
@@ -191,7 +199,7 @@ async def run_examiner_pass(
                         "essay": row["essay"],
                         "band": row.get("band"),
                         "component": component,
-                        "feedback_text": fb.feedback,
+                        "feedback_text": _clean_feedback(fb.feedback),
                         "score": fb.score,
                         "tag": fb.tag,
                         "calibration_delta": fb.calibration_delta,

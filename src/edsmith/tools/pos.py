@@ -17,11 +17,9 @@ def pos_tag(text: str) -> ToolResult:
         details.append({
             "text": token.text,
             "lemma": token.lemma_,
-            "pos": token.pos_,       # coarse: NOUN, VERB, ADJ, ADV, …
-            "tag": token.tag_,       # fine-grained: NN, VBZ, JJ, …
-            "dep": token.dep_,       # syntactic dependency relation
-            "is_stop": token.is_stop,
-            "sentence": token.sent.text[:80],
+            "pos": token.pos_,
+            "tag": token.tag_,
+            "dep": token.dep_,
         })
 
     pos_counts: dict[str, int] = {}

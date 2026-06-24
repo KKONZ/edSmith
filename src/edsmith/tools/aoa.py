@@ -116,7 +116,7 @@ def compute_aoa_stats(text: str) -> ToolResult:
         tool="aoa",
         count=len(details),
         stats=stats,
-        details=details,
+        details=[],
         summary=(
             f"{len(details)}/{len(tokens)} tokens matched ({coverage:.0f}% coverage); "
             f"mean AoA {stats['aoa_mean']:.2f} ± {stats['aoa_std']:.2f}; "

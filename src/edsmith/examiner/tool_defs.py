@@ -107,34 +107,12 @@ _AOA_LOOKUP = {
     },
 }
 
-_POS = {
-    "type": "function",
-    "function": {
-        "name": "pos_tag",
-        "description": (
-            "POS-tag a piece of text with spaCy. Returns per-token part-of-speech, "
-            "fine-grained tag, syntactic dependency relation, and lemma. Call this on "
-            "specific sentences to understand grammatical structure — e.g. to check "
-            "whether the writer uses subordinate clauses, varied verb forms, or relies "
-            "heavily on simple noun phrases."
-        ),
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "text": {"type": "string", "description": "Text to tag (sentence or paragraph)."},
-            },
-            "required": ["text"],
-        },
-    },
-}
-
 _ALL = {
     "aoa_stats": _AOA,
     "aoa_lookup": _AOA_LOOKUP,
     "grammar_check": _GRAMMAR,
     "complexity_stats": _COMPLEXITY,
     "discourse_analysis": _DISCOURSE,
-    "pos_tag": _POS,
 }
 
 
@@ -150,8 +128,6 @@ def get_tool_definitions(strategy: StrategyGuidance) -> list[dict]:
         tools.append(_COMPLEXITY)
     if strategy.use_discourse:
         tools.append(_DISCOURSE)
-    if strategy.use_pos:
-        tools.append(_POS)
     return tools
 
 
@@ -176,7 +152,7 @@ def execute_tool(name: str, arguments: str) -> str:
 
         if name == "aoa_stats":
             from edsmith.tools.aoa import compute_aoa_stats
-            result = _trim_result(compute_aoa_stats(text))
+            result = dict(compute_aoa_stats(text))
         elif name == "aoa_lookup":
             from edsmith.tools.aoa import aoa_lookup
             words = args.get("words", [])
@@ -185,7 +161,7 @@ def execute_tool(name: str, arguments: str) -> str:
             result = _trim_result(aoa_lookup(words), max_details=20)
         elif name == "pos_tag":
             from edsmith.tools.pos import pos_tag
-            result = _trim_result(pos_tag(text), max_details=20)
+            result = _trim_result(pos_tag(text), max_details=10)
         elif name == "grammar_check":
             from edsmith.tools.grammar import grammar_check
             result = _trim_result(grammar_check(text), max_details=15)
@@ -195,6 +171,8 @@ def execute_tool(name: str, arguments: str) -> str:
         elif name == "discourse_analysis":
             from edsmith.tools.discourse import discourse_analysis
             result = _trim_result(discourse_analysis(text), max_details=10)
+        elif name == "pos_tag":
+            return json.dumps({"error": "pos_tag tool has been removed"})
         else:
             return json.dumps({"error": f"Unknown tool: {name}"})
 

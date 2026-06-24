@@ -138,10 +138,13 @@ def _build_messages(
         )
         system_parts.append(
             "When using grammar and vocabulary tools together:\n"
-            "- If `aoa_lookup` returns 'not found' for a word, consider whether it is a "
-            "misspelling. Use your own language understanding to infer what the writer most "
-            "likely intended, then call `aoa_lookup` again with the corrected spelling. "
-            "Report both the misspelling and your inferred intended word in your feedback.\n"
+            "- When `grammar_check` flags a word and its `aoa` field is null, the word is "
+            "likely misspelled and therefore absent from the AoA vocabulary. Do NOT use the "
+            "tool's replacement suggestions — they are mechanical and often miss the writer's "
+            "intent. Instead, use your own language understanding to read the sentence in "
+            "context and infer what the writer most likely meant to write. Then call "
+            "`aoa_lookup` with that inferred word to assess its vocabulary level. Report the "
+            "misspelling, your inferred intended word, and its AoA in your feedback.\n"
             "- Beyond counting surface errors, assess **comprehension impact**: does any "
             "error or pattern of errors make a sentence ambiguous or unintelligible — i.e. "
             "a reader cannot confidently reconstruct what the writer meant? Flag these "
@@ -168,6 +171,25 @@ def _build_messages(
 # Tool execution loop (used when strategy.use_tool_calling=True)
 # ---------------------------------------------------------------------------
 
+_EMPTY_CONTENT_RETRIES = 3
+
+
+async def _acomplete_with_retry(provider, messages, model, enable_thinking, tools=None):
+    """Call acomplete with retry on empty-content responses (model stops without producing output)."""
+    for attempt in range(_EMPTY_CONTENT_RETRIES):
+        try:
+            return await provider.acomplete(
+                messages, model=model, enable_thinking=enable_thinking, tools=tools
+            )
+        except RuntimeError as exc:
+            if "empty content" in str(exc) and attempt < _EMPTY_CONTENT_RETRIES - 1:
+                wait = 2 ** attempt
+                logger.warning("Empty content on attempt %d, retrying in %ds", attempt + 1, wait)
+                await asyncio.sleep(wait)
+            else:
+                raise
+
+
 async def _run_tool_loop(
     messages: list[Message],
     tools: list[dict],
@@ -178,8 +200,8 @@ async def _run_tool_loop(
     from edsmith.examiner.tool_defs import execute_tool
 
     for _ in range(_MAX_TOOL_ROUNDS):
-        response = await provider.acomplete(
-            messages, model=model, enable_thinking=enable_thinking, tools=tools
+        response = await _acomplete_with_retry(
+            provider, messages, model, enable_thinking, tools=tools
         )
 
         if not response.tool_calls:
@@ -194,8 +216,8 @@ async def _run_tool_loop(
             logger.debug("tool_call name=%s result_len=%d", tc.name, len(result))
             messages.append(Message(role="tool", content=result, tool_call_id=tc.id))
 
-    # Max rounds reached — do a final call without tools to force a response
-    return (await provider.acomplete(messages, model=model, enable_thinking=enable_thinking)).content
+    # Max rounds reached — final call without tools
+    return (await _acomplete_with_retry(provider, messages, model, enable_thinking)).content
 
 
 # ---------------------------------------------------------------------------

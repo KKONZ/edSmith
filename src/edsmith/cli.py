@@ -131,7 +131,7 @@ def show_sessions(
 def examiner_pass(
     session_id: str = typer.Argument(..., help="Session ID"),
     iteration: int = typer.Argument(..., help="Iteration number (0-based)"),
-    concurrency: int = typer.Option(4, "--concurrency", "-c", help="Max concurrent essay API calls"),
+    concurrency: int = typer.Option(2, "--concurrency", "-c", help="Max concurrent essay API calls"),
     drive: Optional[Path] = typer.Option(
         None, "--drive",
         help="Override EDSMITH_DRIVE_PATH",

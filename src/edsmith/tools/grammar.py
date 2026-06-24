@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import pandas as pd
 import language_tool_python
 
@@ -12,6 +14,11 @@ _tool: language_tool_python.LanguageTool | None = None
 def _get_tool() -> language_tool_python.LanguageTool:
     global _tool
     if _tool is None:
+        import os
+        java_home = os.environ.get("JAVA_HOME")
+        if java_home:
+            bin_dir = str(Path(java_home) / "bin")
+            os.environ["PATH"] = bin_dir + os.pathsep + os.environ.get("PATH", "")
         _tool = language_tool_python.LanguageTool("en-US")
     return _tool
 
@@ -21,20 +28,15 @@ def grammar_check(text: str) -> ToolResult:
 
     details = []
     for m in matches:
-        span = text[m.offset : m.offset + m.errorLength].strip()
+        span = text[m.offset : m.offset + m.error_length].strip()
         # for multi-word spans, take the first token for AoA lookup
         word = span.lower().split()[0] if span else ""
         entry = _aoa_entry(word) if word else None
         details.append({
             "message": m.message,
             "word": span,
-            "offset": m.offset,
-            "length": m.errorLength,
             "replacements": m.replacements[:3],
-            "rule_id": m.ruleId,
             "aoa": entry["aoa"] if entry else None,
-            "nsyll": entry["nsyll"] if entry else None,
-            "freq_pm": entry["freq_pm"] if entry else None,
         })
 
     count = len(matches)
