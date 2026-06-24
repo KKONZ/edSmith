@@ -49,7 +49,19 @@ Updating to a new version: uninstall first, then reinstall:
 
 **5. Connect a Colab GPU runtime**
 
-Open `notebooks/edsmith_training.ipynb` in a Colab session with a GPU runtime. The notebook uses [`googlecolab/colab-mcp`](https://github.com/googlecolab/colab-mcp) — add it as a separate MCP server via `uvx git+https://github.com/googlecolab/colab-mcp`.
+Open `notebooks/edsmith_training.ipynb` in a Colab session with a GPU runtime. The notebook is driven via [`SebastianGilPinzon/colab-mcp`](https://github.com/SebastianGilPinzon/colab-mcp) — a community fork that fixes tool visibility and GPU control issues in the official client. Add it to `.claude/settings.json`:
+
+```json
+{
+  "mcpServers": {
+    "colab-proxy-mcp": {
+      "type": "stdio",
+      "command": "uvx",
+      "args": ["git+https://github.com/SebastianGilPinzon/colab-mcp"]
+    }
+  }
+}
+```
 
 Make sure Google Drive is mounted in Colab and that `EDSMITH_DRIVE_PATH` points to the same folder in both environments.
 
@@ -173,3 +185,40 @@ prompt_policies:
 ```
 
 Strategy Guidance (which linguistic tools to inject, contrastive anchoring, per-component focus) is managed by the Chief Examiner at runtime and is not part of `session.yaml`.
+
+---
+
+## Local development
+
+If you're developing the plugin locally and want source changes reflected immediately without reinstalling:
+
+**1. Create `.claude/settings.local.json`** (gitignored — never committed):
+
+```json
+{
+  "mcpServers": {
+    "plugin:edsmith:edsmith": {
+      "command": "uv",
+      "args": [
+        "--directory",
+        "C:\\Users\\...\\plugins\\cache\\edsmith\\edsmith\\0.1.0",
+        "run",
+        "-m",
+        "edsmith.mcp"
+      ],
+      "env": {
+        "EDSMITH_DEV_PATH": "C:\\path\\to\\edSmith\\src",
+        "EDSMITH_DRIVE_PATH": "C:\\Users\\...\\plugins\\cache\\edsmith\\edsmith\\0.1.0\\edsmith_drive"
+      }
+    }
+  }
+}
+```
+
+Replace `EDSMITH_DEV_PATH` with the absolute path to your local `src/` directory. The plugin cache path (`--directory` and `EDSMITH_DRIVE_PATH`) can be found by running:
+
+```
+claude plugin list
+```
+
+**How it works**: `src/edsmith/mcp/__main__.py` checks `EDSMITH_DEV_PATH` at startup and prepends it to `sys.path`, so the local source takes precedence over the installed package. The plugin's own venv still supplies all third-party dependencies.

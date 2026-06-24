@@ -51,6 +51,9 @@ coverage.xml
 # Local Claude Code overrides (machine-specific)
 .claude/settings.local.json
 
+# Misplaced local clones (delete after disconnecting MCP)
+UserskarlkReposcolab-mcp/
+
 # OS
 .DS_Store
 Thumbs.db
