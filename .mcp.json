@@ -8,7 +8,10 @@
         "run",
         "-m",
         "edsmith.mcp"
-      ]
+      ],
+      "env": {
+        "PYTHONUTF8": "1"
+      }
     },
     "colab-proxy-mcp": {
       "command": "uvx",
