@@ -15,6 +15,8 @@ def _get_lookup() -> dict[str, dict]:
     global _lookup
     if _lookup is None:
         df = pd.read_parquet(_DATA_PATH)
+        df = df.dropna(subset=["word"])
+        df = df[df["word"].apply(lambda x: isinstance(x, str))]
         _lookup = df.set_index("word").to_dict(orient="index")
     return _lookup
 

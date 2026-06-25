@@ -108,12 +108,18 @@ def register_examiner_pass(app: FastMCP):
         state = load_state(drive_path, session_id)
         train_df = await asyncio.to_thread(_ensure_session_data, drive_path, session_id, state)
 
+        import sys
+        n_essays = len(train_df)
+        print(f"[examiner] session={session_id} iter={iteration} essays={n_essays} concurrency={concurrency}", flush=True, file=sys.stderr)
+
         provider = OpenRouterProvider()
         semaphore = asyncio.Semaphore(concurrency)
         records: list[dict] = []
         warnings: list[str] = []
+        completed = 0
 
         async def process_essay(row: dict) -> None:
+            nonlocal completed
             async with semaphore:
                 try:
                     feedbacks = await generate_feedback(
@@ -136,6 +142,9 @@ def register_examiner_pass(app: FastMCP):
                         })
                 except Exception as exc:
                     warnings.append(f"Essay failed: {exc}")
+                finally:
+                    completed += 1
+                    print(f"[examiner] {completed}/{n_essays} essays done", flush=True, file=sys.stderr)
 
         await asyncio.gather(*[
             process_essay(row) for row in train_df.to_dict(orient="records")

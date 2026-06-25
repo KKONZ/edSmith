@@ -1,5 +1,5 @@
 import pandas as pd
-df = pd.read_parquet(r"C:\Users\karlk\Repos\edSmith\edsmith_drive\sessions\282d5efa-8508-47ba-b72d-1783471a9744\data\test.parquet")
+df = pd.read_parquet(r"C:\Users\karlk\Repos\edSmith\edsmith_drive\sessions\7c9ca621-4da9-453f-9a57-e7fbee231d73\data\test.parquet")
 print(df.columns.tolist())
 #print(df)#.head(8))
 
