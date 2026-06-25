@@ -56,7 +56,7 @@ def aoa_lookup(words: list[str]) -> ToolResult:
             else:
                 missing.append(key)
 
-    aoa_vals = [d["aoa"] for d in details]
+    aoa_vals = [d["aoa"] for d in details if d.get("aoa") is not None]
     stats: dict[str, float] = {"found": len(details), "missing": len(missing)}
     if aoa_vals:
         import statistics

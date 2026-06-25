@@ -35,10 +35,10 @@ def _ensure_session_data(drive_path: Path, session_id: str, state) -> pd.DataFra
     raw_train = load_ielts("train")
     raw_test = load_ielts("test")
 
-    if s.size:
-        raw_train, raw_test = apply_size_limit(raw_train, raw_test, s.size, s.random_state)
     if s.test_ratio is not None:
         raw_test = raw_test.sample(frac=s.test_ratio, random_state=s.random_state).reset_index(drop=True)
+    if s.size:
+        raw_train, raw_test = apply_size_limit(raw_train, raw_test, s.size, s.random_state)
 
     train_df, val_df = train_test_split(raw_train, validation_ratio=s.validation_ratio, random_state=s.random_state)
 

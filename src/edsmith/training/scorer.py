@@ -283,7 +283,9 @@ def _evaluate(model_path: str, eval_data_path: str, component: str | None = None
         for j in range(n_components):
             raw = all_generated[i * n_components + j]
             try:
-                pred = max(1.0, min(9.0, round(float(raw) * 2) / 2))
+                import re as _re
+                raw_clean = _re.sub(r"<think>.*?</think>", "", raw, flags=_re.DOTALL).strip()
+                pred = max(1.0, min(9.0, round(float(raw_clean) * 2) / 2))
                 component_preds.append(pred)
             except (ValueError, TypeError):
                 _log(f"  unparseable: row {i} comp {j} → {raw!r}")
