@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 from pathlib import Path
 
@@ -12,6 +13,8 @@ from edsmith.data.loader import apply_size_limit, train_test_split
 from edsmith.examiner.feedback import generate_feedback
 from edsmith.providers.openrouter import OpenRouterProvider
 from edsmith.session.state import load_state
+
+logger = logging.getLogger(__name__)
 
 _DEFAULT_DRIVE = "/content/drive/MyDrive/edsmith"
 
@@ -56,11 +59,12 @@ def _build_summary(
     parquet_path: Path,
     session_id: str,
     iteration: int,
+    components: list[str],
 ) -> dict:
     essays_with_all = (
         feedback_df.groupby("essay")["component"]
         .nunique()
-        .eq(len(COMPONENT_HEADINGS))
+        .eq(len(components))
         .sum()
         if not feedback_df.empty
         else 0
@@ -102,24 +106,48 @@ def register_examiner_pass(app: FastMCP):
     async def run_examiner_pass(
         session_id: str,
         iteration: int,
-        concurrency: int = 4,
+        concurrency: int = 12,
     ) -> dict:
+        import json as _json
+        import sys
+
         drive_path = _drive_path()
         state = load_state(drive_path, session_id)
         train_df = await asyncio.to_thread(_ensure_session_data, drive_path, session_id, state)
 
-        import sys
+        scorer_cfg_path = drive_path / "sessions" / session_id / "scorer_config.json"
+        scorer_component: str | None = None
+        if scorer_cfg_path.exists():
+            scorer_component = _json.loads(scorer_cfg_path.read_text()).get("component")
+        active_components = [scorer_component] if scorer_component else list(COMPONENT_HEADINGS.keys())
+
         n_essays = len(train_df)
-        print(f"[examiner] session={session_id} iter={iteration} essays={n_essays} concurrency={concurrency}", flush=True, file=sys.stderr)
+        expected_requests = n_essays * len(active_components)
+
+        # File log for this pass — captures all edsmith.examiner.* loggers
+        log_path = drive_path / "sessions" / session_id / f"examiner_iter{iteration}.log"
+        _file_handler = logging.FileHandler(log_path, mode="w", encoding="utf-8")
+        _file_handler.setLevel(logging.INFO)
+        _file_handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s %(message)s"))
+        _examiner_logger = logging.getLogger("edsmith.examiner")
+        _examiner_logger.addHandler(_file_handler)
+        _examiner_logger.setLevel(logging.INFO)
+
+        logger.info(
+            "START session=%s iter=%d essays=%d components=%s expected_requests=%d concurrency=%d",
+            session_id, iteration, n_essays, active_components, expected_requests, concurrency,
+        )
+        print(f"[examiner] session={session_id} iter={iteration} essays={n_essays} components={active_components} expected_requests={expected_requests}", flush=True, file=sys.stderr)
 
         provider = OpenRouterProvider()
         semaphore = asyncio.Semaphore(concurrency)
         records: list[dict] = []
         warnings: list[str] = []
         completed = 0
+        requests_done = 0
 
         async def process_essay(row: dict) -> None:
-            nonlocal completed
+            nonlocal completed, requests_done
             async with semaphore:
                 try:
                     feedbacks = await generate_feedback(
@@ -129,6 +157,7 @@ def register_examiner_pass(app: FastMCP):
                         strategy=state.strategy_guidance,
                         provider=provider,
                         model_config=state.models,
+                        components=active_components,
                     )
                     for component, fb in feedbacks.items():
                         records.append({
@@ -140,21 +169,34 @@ def register_examiner_pass(app: FastMCP):
                             "score": fb.score,
                             "tag": fb.tag,
                         })
+                        requests_done += 1
                 except Exception as exc:
                     warnings.append(f"Essay failed: {exc}")
                 finally:
                     completed += 1
+                    logger.info(
+                        "essay %d/%d done requests=%d/%d",
+                        completed, n_essays, requests_done, expected_requests,
+                    )
                     print(f"[examiner] {completed}/{n_essays} essays done", flush=True, file=sys.stderr)
 
-        await asyncio.gather(*[
-            process_essay(row) for row in train_df.to_dict(orient="records")
-        ])
+        try:
+            await asyncio.gather(*[
+                process_essay(row) for row in train_df.to_dict(orient="records")
+            ])
+        finally:
+            logger.info(
+                "END essays=%d requests=%d/%d warnings=%d",
+                completed, requests_done, expected_requests, len(warnings),
+            )
+            _examiner_logger.removeHandler(_file_handler)
+            _file_handler.close()
 
         feedback_df = pd.DataFrame(records)
         out_path = drive_path / "sessions" / session_id / f"feedback_iter{iteration}.parquet"
         out_path.parent.mkdir(parents=True, exist_ok=True)
         feedback_df.to_parquet(out_path, index=False)
 
-        return _build_summary(feedback_df, len(train_df), warnings, out_path, session_id, iteration)
+        return _build_summary(feedback_df, len(train_df), warnings, out_path, session_id, iteration, active_components)
 
     return run_examiner_pass

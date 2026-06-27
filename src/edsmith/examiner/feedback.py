@@ -224,7 +224,7 @@ async def _run_tool_loop(
         # Execute each tool and append results
         for tc in response.tool_calls:
             result = await asyncio.to_thread(execute_tool, tc.name, tc.arguments)
-            logger.debug("tool_call name=%s result_len=%d", tc.name, len(result))
+            logger.info("tool_call name=%s result_len=%d", tc.name, len(result))
             messages.append(Message(role="tool", content=result, tool_call_id=tc.id))
 
     # Max rounds reached — final call without tools
@@ -309,7 +309,7 @@ async def _reflect_and_calibrate(
     if abs(avg - band) <= 0.25:
         return feedbacks
 
-    logger.debug("calibration triggered avg=%.2f target=%s delta=%.2f", avg, band, avg - band)
+    logger.info("[recalibration] triggered avg=%.2f target=%s delta=%.2f", avg, band, avg - band)
 
     summaries = []
     for comp, fb in feedbacks.items():
@@ -352,7 +352,7 @@ async def _reflect_and_calibrate(
             continue
         note = adj.get("note", "")
         old_fb = result[comp]
-        logger.debug("calibration %s: %.1f → %.1f  %s", comp, old_fb.score, new_score, note)
+        logger.info("[recalibration] %s: %.1f → %.1f  %s", comp, old_fb.score, new_score, note)
         delta = round(new_score - (old_fb.score or 0.0), 2)
         result[comp] = ComponentFeedback(
             component=comp,
