@@ -131,11 +131,6 @@ def get_tool_definitions(strategy: StrategyGuidance) -> list[dict]:
     return tools
 
 
-def _trim_result(result: dict) -> dict:
-    """Strip details list — return only tool, count, stats, and summary."""
-    return {k: v for k, v in result.items() if k != "details"}
-
-
 def execute_tool(name: str, arguments: str) -> str:
     """Execute a tool call and return the result as a JSON string."""
     try:
@@ -144,22 +139,22 @@ def execute_tool(name: str, arguments: str) -> str:
 
         if name == "aoa_stats":
             from edsmith.tools.aoa import compute_aoa_stats
-            result = _trim_result(dict(compute_aoa_stats(text)))
+            result = dict(compute_aoa_stats(text))
         elif name == "aoa_lookup":
             from edsmith.tools.aoa import aoa_lookup
             words = args.get("words", [])
             if not isinstance(words, list):
                 words = [words] if words else []
-            result = _trim_result(dict(aoa_lookup(words)))
+            result = dict(aoa_lookup(words))
         elif name == "grammar_check":
             from edsmith.tools.grammar import grammar_check
-            result = _trim_result(dict(grammar_check(text)))
+            result = dict(grammar_check(text))
         elif name == "complexity_stats":
             from edsmith.tools.complexity import complexity_stats
-            result = _trim_result(dict(complexity_stats(text)))
+            result = dict(complexity_stats(text))
         elif name == "discourse_analysis":
             from edsmith.tools.discourse import discourse_analysis
-            result = _trim_result(dict(discourse_analysis(text)))
+            result = dict(discourse_analysis(text))
         elif name == "pos_tag":
             return json.dumps({"error": "pos_tag tool has been removed"})
         else:

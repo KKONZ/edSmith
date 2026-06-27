@@ -37,7 +37,7 @@ strategy_guidance:
   per_component_focus: {}
   use_tool_calling: true
 scorer:
-  component: grammar
+  component: coherence
   gradient_accumulation_steps: 4
   learning_rate: 0.0002
   load_in_4bit: true

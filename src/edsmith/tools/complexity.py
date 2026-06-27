@@ -109,7 +109,7 @@ def complexity_stats(text: str) -> ToolResult:
         tool="complexity",
         count=len(sentences),
         stats=stats,
-        details=details,
+        details=[],
         summary=(
             f"{len(sentences)} sentence(s); "
             f"avg length {stats['sent_len_mean']:.1f} words; "

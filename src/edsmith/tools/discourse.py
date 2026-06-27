@@ -231,7 +231,7 @@ def discourse_analysis(text: str) -> ToolResult:
         tool="discourse",
         count=len(paras),
         stats=stats,
-        details=details,
+        details=[],
         summary=(
             f"{len(paras)} paragraph(s); "
             f"{total_transitions_wordlist} wordlist transition(s) "
