@@ -15,7 +15,11 @@ _NOMINALIZATION_SUFFIXES = ("tion", "sion", "ment", "ness", "ity", "ance", "ence
 def _dep_depth(token: spacy.tokens.Token) -> int:
     depth = 0
     current = token
+    seen = set()
     while current.head is not current:
+        if current.i in seen:
+            break  # cycle guard
+        seen.add(current.i)
         current = current.head
         depth += 1
     return depth

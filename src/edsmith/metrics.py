@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import math
+from typing import Any
+
 import numpy as np
 from sklearn.metrics import cohen_kappa_score
 
@@ -31,15 +34,16 @@ def adjacent_accuracy(
     return float(np.mean(np.abs(arr_true - arr_pred) <= tolerance))
 
 
-def quadratic_weighted_kappa(y_true: list[float], y_pred: list[float]) -> float:
+def quadratic_weighted_kappa(y_true: list[float], y_pred: list[float]) -> float | None:
     # Convert half-band floats to integers (5.0→10, 5.5→11) so sklearn sees
     # multiclass, not continuous — avoids "mix of continuous and binary" error.
     y_true_int = [round(v * 2) for v in y_true]
     y_pred_int = [round(v * 2) for v in y_pred]
     try:
-        return float(cohen_kappa_score(y_true_int, y_pred_int, weights="quadratic"))
+        result = float(cohen_kappa_score(y_true_int, y_pred_int, weights="quadratic"))
+        return None if math.isnan(result) else result
     except ValueError:
-        return float("nan")
+        return None
 
 
 def standardized_mean_difference(y_true: list[float], y_pred: list[float]) -> float:
@@ -52,14 +56,27 @@ def standardized_mean_difference(y_true: list[float], y_pred: list[float]) -> fl
     return float((arr_pred.mean() - arr_true.mean()) / std)
 
 
+def confusion_matrix(
+    y_true: list[float], y_pred: list[float]
+) -> dict[str, dict[str, int]]:
+    """Confusion matrix as {true_band: {pred_band: count}}, sorted by band."""
+    labels = sorted(set(y_true) | set(y_pred))
+    label_keys = [f"{v:.1f}" for v in labels]
+    matrix: dict[str, dict[str, int]] = {k: {p: 0 for p in label_keys} for k in label_keys}
+    for t, p in zip(y_true, y_pred):
+        matrix[f"{t:.1f}"][f"{p:.1f}"] += 1
+    return matrix
+
+
 def compute_all(
     y_true: list[float],
     y_pred: list[float],
     bands: list[float] | None = None,
-) -> dict[str, float]:
+) -> dict[str, Any]:
     return {
         "accuracy": accuracy(y_true, y_pred),
         "adjacent_accuracy": adjacent_accuracy(y_true, y_pred, bands=bands),
         "qwk": quadratic_weighted_kappa(y_true, y_pred),
         "smd": standardized_mean_difference(y_true, y_pred),
+        "confusion_matrix": confusion_matrix(y_true, y_pred),
     }

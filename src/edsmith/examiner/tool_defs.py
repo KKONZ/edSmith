@@ -131,17 +131,9 @@ def get_tool_definitions(strategy: StrategyGuidance) -> list[dict]:
     return tools
 
 
-def _trim_result(result: dict, max_details: int = 10) -> dict:
-    """Keep summary + stats but cap the details list to avoid context bloat."""
-    trimmed = {k: v for k, v in result.items() if k != "details"}
-    details = result.get("details", [])
-    if len(details) > max_details:
-        half = max_details // 2
-        trimmed["details"] = details[:half] + details[-half:]
-        trimmed["details_truncated"] = f"{len(details) - max_details} entries omitted (showing first/last {half})"
-    else:
-        trimmed["details"] = details
-    return trimmed
+def _trim_result(result: dict) -> dict:
+    """Strip details list — return only tool, count, stats, and summary."""
+    return {k: v for k, v in result.items() if k != "details"}
 
 
 def execute_tool(name: str, arguments: str) -> str:
@@ -152,25 +144,22 @@ def execute_tool(name: str, arguments: str) -> str:
 
         if name == "aoa_stats":
             from edsmith.tools.aoa import compute_aoa_stats
-            result = dict(compute_aoa_stats(text))
+            result = _trim_result(dict(compute_aoa_stats(text)))
         elif name == "aoa_lookup":
             from edsmith.tools.aoa import aoa_lookup
             words = args.get("words", [])
             if not isinstance(words, list):
                 words = [words] if words else []
-            result = _trim_result(aoa_lookup(words), max_details=20)
-        elif name == "pos_tag":
-            from edsmith.tools.pos import pos_tag
-            result = _trim_result(pos_tag(text), max_details=10)
+            result = _trim_result(dict(aoa_lookup(words)))
         elif name == "grammar_check":
             from edsmith.tools.grammar import grammar_check
-            result = _trim_result(grammar_check(text), max_details=15)
+            result = _trim_result(dict(grammar_check(text)))
         elif name == "complexity_stats":
             from edsmith.tools.complexity import complexity_stats
-            result = _trim_result(complexity_stats(text), max_details=15)
+            result = _trim_result(dict(complexity_stats(text)))
         elif name == "discourse_analysis":
             from edsmith.tools.discourse import discourse_analysis
-            result = _trim_result(discourse_analysis(text), max_details=10)
+            result = _trim_result(dict(discourse_analysis(text)))
         elif name == "pos_tag":
             return json.dumps({"error": "pos_tag tool has been removed"})
         else:

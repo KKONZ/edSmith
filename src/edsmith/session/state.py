@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import uuid
 from pathlib import Path
+from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -34,8 +35,8 @@ class SessionMetrics(BaseModel):
     """
     session_id: str
     iteration: int
-    val: dict[str, float]
-    test: dict[str, float]
+    val: dict[str, Any]
+    test: dict[str, Any]
 
 
 def _state_path(drive_path: Path, session_id: str) -> Path:

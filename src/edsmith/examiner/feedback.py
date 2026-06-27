@@ -161,9 +161,20 @@ def _build_messages(
         "\nThen provide your detailed feedback."
     )
 
+    if band is not None:
+        system_parts.append(
+            f"The verified overall band for this essay is {band}. "
+            "Use this as a calibration anchor for your component score. "
+            "Do not mention or repeat the overall band score in your feedback prose."
+        )
+
+    user_content = f"Question:\n{question}\n\nEssay:\n{essay}"
+    if band is not None:
+        user_content += f"\n\nVerified overall band: {band}"
+
     return [
         Message(role="system", content="\n\n".join(system_parts)),
-        Message(role="user", content=f"Question:\n{question}\n\nEssay:\n{essay}"),
+        Message(role="user", content=user_content),
     ]
 
 
