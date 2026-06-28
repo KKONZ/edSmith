@@ -44,7 +44,7 @@ scorer:
   lora_alpha: 16
   lora_r: 16
   max_seq_length: 2048
-  max_steps: 40
+  max_steps: 1000
   model_name: unsloth/Qwen3-1.7B
   per_device_train_batch_size: 2
 session_id: null

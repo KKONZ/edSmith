@@ -235,6 +235,54 @@ async def _run_tool_loop(
 # Per-component generation
 # ---------------------------------------------------------------------------
 
+def _scrub_band_from_feedback(text: str, band: float) -> str:
+    """Remove mentions of the verified overall band score from feedback prose.
+
+    Only targets phrases where the band value appears alongside band-signalling
+    words (band, overall, verified). Leaves the <score> tag and numeric values
+    in other contexts untouched.
+    """
+    band_strs = [str(band)]
+    try:
+        if float(band) == int(float(band)):
+            band_strs.append(str(int(float(band))))
+    except (TypeError, ValueError):
+        pass
+
+    # Temporarily replace XML tags so we don't match inside them
+    tag_store: list[str] = []
+
+    def _stash(m: re.Match) -> str:
+        tag_store.append(m.group(0))
+        return f"__TAG_{len(tag_store) - 1}__"
+
+    protected = re.sub(r"<(?:score|confidence)>.*?</(?:score|confidence)>", _stash, text, flags=re.IGNORECASE | re.DOTALL)
+
+    for band_str in band_strs:
+        escaped = re.escape(band_str)
+        # "band 6", "Band: 6.0", "overall band of 6", "verified band 6", "band score 6"
+        protected = re.sub(
+            rf"(?i)(?:(?:verified|overall)\s+)?band(?:\s+score)?(?:\s*(?:is|of|:))?\s*{escaped}(?!\s*\.?\d)",
+            "[band score]",
+            protected,
+        )
+        # "overall score of 6", "6 overall band"
+        protected = re.sub(
+            rf"(?i)(?:overall\s+(?:score|band)\s+(?:of\s+)?)?{escaped}\s*(?:overall\s+)?band",
+            "[band score]",
+            protected,
+        )
+
+    n_redacted = protected.count("[band score]")
+    if n_redacted:
+        logger.warning("scrubbed %d band mention(s) from feedback (band=%.1f)", n_redacted, band)
+
+    # Restore stashed tags
+    for i, tag in enumerate(tag_store):
+        protected = protected.replace(f"__TAG_{i}__", tag)
+    return protected
+
+
 async def _generate_component(
     question: str,
     essay: str,
@@ -270,9 +318,12 @@ async def _generate_component(
 # ---------------------------------------------------------------------------
 
 _CALIBRATION_SYSTEM = """\
-You are a senior IELTS examiner reviewing a set of component scores for consistency.
-You are given four component scores and brief feedback excerpts, plus the verified
-overall band for the essay. The four component scores must average to the overall band.
+You are a senior IELTS examiner reviewing component scores for consistency.
+You are given one or more component scores and brief feedback excerpts, plus the verified
+overall band for the essay. When all four components are present, their scores should
+average to the overall band. When fewer components are present, each score should be
+broadly consistent with the overall band — a difference of more than 0.5 band steps
+from the overall band requires clear justification in the feedback.
 
 Identify which component score(s) should be adjusted (changing by 0.5–1.0 band steps
 is normal; avoid large swings). For each adjusted component, provide a one-sentence
@@ -292,6 +343,17 @@ Scores must be 0–9 in 0.5 increments.
 """
 
 
+def _replace_score_tag(feedback: str, new_score: float) -> str:
+    """Replace the <score> tag value in feedback text with the calibrated score."""
+    return re.sub(
+        r"<score>[\d.]+</score>",
+        f"<score>{new_score}</score>",
+        feedback,
+        count=1,
+        flags=re.IGNORECASE,
+    )
+
+
 async def _reflect_and_calibrate(
     feedbacks: dict[str, ComponentFeedback],
     band: float,
@@ -302,11 +364,11 @@ async def _reflect_and_calibrate(
     import json as _json
 
     scores = {k: fb.score for k, fb in feedbacks.items() if fb.score is not None}
-    if len(scores) < 4:
+    if not scores:
         return feedbacks
 
-    avg = sum(scores.values()) / 4
-    if abs(avg - band) <= 0.25:
+    avg = sum(scores.values()) / len(scores)
+    if abs(avg - band) <= 0.5:
         return feedbacks
 
     logger.info("[recalibration] triggered avg=%.2f target=%s delta=%.2f", avg, band, avg - band)
@@ -354,9 +416,12 @@ async def _reflect_and_calibrate(
         old_fb = result[comp]
         logger.info("[recalibration] %s: %.1f → %.1f  %s", comp, old_fb.score, new_score, note)
         delta = round(new_score - (old_fb.score or 0.0), 2)
+        updated_feedback = _replace_score_tag(old_fb.feedback, new_score)
+        if updated_feedback == old_fb.feedback:
+            updated_feedback = old_fb.feedback + f"\n\n[Score calibrated from {old_fb.score} to {new_score}: {note}]"
         result[comp] = ComponentFeedback(
             component=comp,
-            feedback=old_fb.feedback + f"\n\n[Score calibrated from {old_fb.score} to {new_score}: {note}]",
+            feedback=updated_feedback,
             score=new_score,
             tag=old_fb.tag,
             calibration_delta=delta,
@@ -412,14 +477,5 @@ async def generate_feedback(
 
     results = await asyncio.gather(*tasks)
     feedbacks = {fb.component: fb for fb in results}
-
-    if band is not None and len(active_components) == 4:
-        feedbacks = await _reflect_and_calibrate(
-            feedbacks=feedbacks,
-            band=band,
-            provider=provider,
-            model=model_config.generator,
-            enable_thinking=model_config.enable_thinking,
-        )
 
     return feedbacks
