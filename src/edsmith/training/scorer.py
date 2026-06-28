@@ -257,6 +257,9 @@ class _ScoringTrainer:
         weights = torch.ones(B, L, device=labels.device)
         corn_logit_list: list = []
         corn_target_list: list[int] = []
+        n_labeled_total = 0
+        n_think_labeled = 0
+        n_score_found = 0
 
         for b in range(B):
             ids = input_ids[b].tolist()
@@ -273,19 +276,22 @@ class _ScoringTrainer:
                     i += 1
                     continue
 
-                if lbs[i] != -100 and in_think:
-                    weights[b, i] = self._think_weight
+                if lbs[i] != -100:
+                    n_labeled_total += 1
+                    if in_think:
+                        weights[b, i] = self._think_weight
+                        n_think_labeled += 1
 
                 if not in_think and not found_score and lbs[i] != -100:
                     for seq, int_class in self._band_seq_to_int_class.items():
                         end = i + len(seq)
                         if end <= L and tuple(ids[i:end]) == seq:
                             if i > 0:
-                                # logits[b, i-1] predicts the first score token at i
                                 corn_logit_list.append(
                                     _corn_logits_from_vocab(logits[b, i - 1], self._int_band_tok_ids)
                                 )
                                 corn_target_list.append(int_class)
+                                n_score_found += 1
                             found_score = True
                             break
                 i += 1
@@ -313,6 +319,19 @@ class _ScoringTrainer:
             corn_loss = ce_loss.new_zeros(())
 
         total = ce_loss + self._score_weight * corn_loss
+
+        # Log breakdown every 20 steps so we can see what's actually happening
+        step = getattr(self, "state", None)
+        step_n = step.global_step if step is not None else -1
+        if step_n % 20 == 0:
+            print(
+                f"[loss@{step_n}] CE={ce_loss.item():.4f}  "
+                f"CORN={corn_loss.item():.4f} (×{self._score_weight})  "
+                f"total={total.item():.4f}  "
+                f"labeled={n_labeled_total} think={n_think_labeled} scores_found={n_score_found}",
+                flush=True,
+            )
+
         return (total, outputs) if return_outputs else total
 
 
@@ -451,7 +470,7 @@ def _evaluate(model_path: str, eval_data_path: str, component: str | None = None
             messages = [{"role": "user", "content": _format_input(row["question"], row["essay"], comp)}]
             all_prompts.append(
                 tokenizer.apply_chat_template(
-                    messages, tokenize=False, add_generation_prompt=True, enable_thinking=False
+                    messages, tokenize=False, add_generation_prompt=True, enable_thinking=True
                 )
             )
 
