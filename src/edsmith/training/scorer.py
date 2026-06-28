@@ -231,12 +231,11 @@ class _ScoringTrainer:
         self._int_band_tok_ids = [
             tokenizer.encode(str(i), add_special_tokens=False)[0] for i in range(1, 10)
         ]
-        # Map every band's full token sequence → integer class 0–8.
-        # int(band) - 1 collapses .5 values to their lower integer (1.5→0, 2.5→1, …).
-        # CE on the score tokens handles .5 precision; CORN gives ordinal direction.
+        # Map integer score strings "1"-"9" → CORN class 0–8.
+        # Training uses int(band) so "6" covers both 6.0 and 6.5 labels.
         self._band_seq_to_int_class = {
-            tuple(tokenizer.encode(str(b), add_special_tokens=False)): int(b) - 1
-            for b in _BANDS
+            tuple(tokenizer.encode(str(i), add_special_tokens=False)): i - 1
+            for i in range(1, 10)
         }
 
     def compute_loss(self, model, inputs, return_outputs=False, **kwargs):
@@ -254,7 +253,7 @@ class _ScoringTrainer:
         )
         logits = outputs.logits  # [B, L, V]
 
-        weights = torch.ones(B, L, device=labels.device)
+        think_mask = torch.zeros(B, L, device=labels.device)  # 1.0 for think-block tokens only
         corn_logit_list: list = []
         corn_target_list: list[int] = []
         n_labeled_total = 0
@@ -279,7 +278,7 @@ class _ScoringTrainer:
                 if lbs[i] != -100:
                     n_labeled_total += 1
                     if in_think:
-                        weights[b, i] = self._think_weight
+                        think_mask[b, i] = 1.0
                         n_think_labeled += 1
 
                 if not in_think and not found_score and lbs[i] != -100:
@@ -296,36 +295,37 @@ class _ScoringTrainer:
                             break
                 i += 1
 
-        # Weighted CE — shift_weights[i] = weights[i+1] aligns with shift_labels[i]=labels[i+1]
+        # CE — think tokens only, scaled by think_weight.
+        # shift_think[b, j] = think_mask[b, j+1]: was the predicted token inside <think>?
         shift_logits = logits[:, :-1].contiguous()
         shift_labels = labels[:, 1:].contiguous()
-        shift_weights = weights[:, 1:].contiguous()
+        shift_think = think_mask[:, 1:].contiguous()
 
-        ce = F.cross_entropy(
-            shift_logits.view(-1, logits.size(-1)),
-            shift_labels.view(-1),
-            reduction="none",
-            ignore_index=-100,
-        ).view(B, L - 1)
+        ce_loss = logits.new_zeros(())
+        if self._think_weight > 0:
+            ce_per_token = F.cross_entropy(
+                shift_logits.view(-1, logits.size(-1)),
+                shift_labels.view(-1),
+                reduction="none",
+                ignore_index=-100,
+            ).view(B, L - 1)
+            n_think = shift_think.sum().clamp(min=1)
+            ce_loss = self._think_weight * (ce_per_token * shift_think).sum() / n_think
 
-        valid = (shift_labels != -100).float()
-        ce_loss = (ce * shift_weights * valid).sum() / (shift_weights * valid).sum().clamp(min=1)
-
+        # CORN — ordinal regression on score token positions only
+        corn_loss = logits.new_zeros(())
         if corn_logit_list:
             corn_logits = torch.stack(corn_logit_list)  # [N, 8]
             corn_targets = torch.tensor(corn_target_list, device=labels.device)
             corn_loss = self._corn(corn_logits, corn_targets)
-        else:
-            corn_loss = ce_loss.new_zeros(())
 
         total = ce_loss + self._score_weight * corn_loss
 
-        # Log breakdown every 20 steps so we can see what's actually happening
         step = getattr(self, "state", None)
         step_n = step.global_step if step is not None else -1
         if step_n % 20 == 0:
             print(
-                f"[loss@{step_n}] CE={ce_loss.item():.4f}  "
+                f"[loss@{step_n}] CE={ce_loss.item():.4f} (think_w={self._think_weight})  "
                 f"CORN={corn_loss.item():.4f} (×{self._score_weight})  "
                 f"total={total.item():.4f}  "
                 f"labeled={n_labeled_total} think={n_think_labeled} scores_found={n_score_found}",
@@ -525,7 +525,7 @@ def _build_dataset(df, tokenizer):
     has_feedback = "feedback_text" in df.columns
 
     def _to_chat(row):
-        score_str = str(_BANDS[row["label"]])
+        score_str = str(int(_BANDS[row["label"]]))
         if has_feedback and row.get("feedback_text"):
             clean = re.sub(r"<score>[^<]*</score>\s*", "", row["feedback_text"], flags=re.IGNORECASE)
             clean = re.sub(r"<confidence>[^<]*</confidence>\s*", "", clean, flags=re.IGNORECASE).strip()
