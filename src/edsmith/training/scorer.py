@@ -529,4 +529,8 @@ def _build_dataset(df, tokenizer):
 
 def _format_input(question: str, essay: str, component: str) -> str:
     component_name = COMPONENT_HEADINGS.get(component, component)
-    return f"Component: {component_name}\n\nQuestion: {question}\n\nEssay: {essay}"
+    return (
+        f"You are an IELTS examiner. Score the essay below for the '{component_name}' component "
+        f"and explain your reasoning in detail.\n\n"
+        f"Question: {question}\n\nEssay: {essay}"
+    )
