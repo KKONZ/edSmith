@@ -384,7 +384,7 @@ def _train(feedback_path: str, cfg: dict, output_dir: str) -> str:
     print(f"\n[train sample — full chat string]\n{dataset[0]['text']}\n{'─'*60}", flush=True)
 
     think_weight = cfg.get("think_weight", 0.1)
-    score_weight = cfg.get("score_weight", 5.0)
+    score_weight = cfg.get("score_weight", 1.0)
     _log(f"Loss weights — think: {think_weight}  score: {score_weight}")
 
     from unsloth.chat_templates import train_on_responses_only
