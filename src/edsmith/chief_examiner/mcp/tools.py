@@ -75,6 +75,7 @@ def register_chief_examiner(app: FastMCP):
             model_config=state.models,
             drive_path=drive_path,
             critique=critique,
+            trained_components=list(state.model_paths.keys()) or None,
         )
 
         save_proposal(proposal, drive_path)

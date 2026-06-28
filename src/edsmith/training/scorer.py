@@ -143,6 +143,179 @@ def _parse_band_val(val) -> float | None:
 
 
 # ------------------------------------------------------------------
+# Custom loss: weighted CE for thinking tokens + headless CORN for score
+# ------------------------------------------------------------------
+
+def _corn_logits_from_vocab(logits_at_pos, class_tok_ids: list[int]):
+    """Derive CORN logits from vocabulary logits — no projection head.
+
+    Extracts the softmax distribution over `class_tok_ids` tokens, then
+    converts to conditional log-odds P(class > k | class >= k) for each k.
+    Gradient flows directly through the vocabulary logits; no new parameters.
+    """
+    import torch
+    p = torch.softmax(logits_at_pos[class_tok_ids], dim=0)   # [C]
+    cumsum = p.cumsum(0)                                       # P(class <= k)
+    p_gt = 1.0 - cumsum[:-1]                                  # P(class > k), [C-1]
+    p_ge = torch.cat([p.new_ones(1), 1.0 - cumsum[:-2]])     # P(class >= k), [C-1]
+    cond = (p_gt / p_ge.clamp(min=1e-7)).clamp(1e-7, 1.0 - 1e-7)
+    return torch.log(cond) - torch.log(1.0 - cond)           # [C-1]
+
+
+class _CornLoss:
+    """CORN: Conditional Ordinal Regression for Neural networks.
+
+    Mirrors coral_pytorch.losses.corn_loss — conditional subsets per task,
+    BCE aggregated and normalised by total examples across tasks.
+    """
+
+    def __init__(self, num_classes: int) -> None:
+        self.num_classes = num_classes
+
+    def __call__(self, logits, targets):
+        import torch
+        import torch.nn.functional as F
+
+        # Build (mask, binary_label) pairs for each ordinal threshold task.
+        # Task i keeps examples where class >= i (y > i-1) and labels whether class > i.
+        sets = []
+        for i in range(self.num_classes - 1):
+            label_mask = targets > i - 1
+            label_tensor = (targets[label_mask] > i).to(torch.int64)
+            sets.append((label_mask, label_tensor))
+
+        num_examples = 0
+        losses = 0.0
+        for task_index, (train_examples, train_labels) in enumerate(sets):
+            if len(train_labels) < 1:
+                continue
+            num_examples += len(train_labels)
+            pred = logits[train_examples, task_index]
+            log_sigmoid = F.logsigmoid(pred)
+            losses += -torch.sum(
+                log_sigmoid * train_labels + (log_sigmoid - pred) * (1 - train_labels)
+            )
+
+        return losses / num_examples
+
+
+class _ScoringTrainer:
+    """Mixin — provides compute_loss with thinking down-weighting + headless CORN.
+
+    Usage: subclass SFTTrainer with this mixin, or swap in after importing.
+    """
+
+    _think_weight: float
+    _score_weight: float
+    _think_id: int
+    _end_id: int
+    _int_band_tok_ids: list[int]          # token IDs for "1".."9"
+    _band_seq_to_int_class: dict          # tuple(tok_ids) → int class 0–8
+    _corn: _CornLoss
+
+    def _init_scoring(self, tokenizer, think_weight: float, score_weight: float) -> None:
+        import torch.nn.functional as F  # noqa: F401 — trigger import check
+        self._think_weight = think_weight
+        self._score_weight = score_weight
+        self._corn = _CornLoss(num_classes=9)  # 9 integer bands: 1..9
+
+        think_ids = tokenizer.encode("<think>", add_special_tokens=False)
+        end_ids = tokenizer.encode("</think>", add_special_tokens=False)
+        assert len(think_ids) == 1 and len(end_ids) == 1, (
+            "<think> and </think> must each be a single token in this tokenizer"
+        )
+        self._think_id = think_ids[0]
+        self._end_id = end_ids[0]
+
+        self._int_band_tok_ids = [
+            tokenizer.encode(str(i), add_special_tokens=False)[0] for i in range(1, 10)
+        ]
+        # Map every band's full token sequence → integer class 0–8.
+        # int(band) - 1 collapses .5 values to their lower integer (1.5→0, 2.5→1, …).
+        # CE on the score tokens handles .5 precision; CORN gives ordinal direction.
+        self._band_seq_to_int_class = {
+            tuple(tokenizer.encode(str(b), add_special_tokens=False)): int(b) - 1
+            for b in _BANDS
+        }
+
+    def compute_loss(self, model, inputs, return_outputs=False, **kwargs):
+        import torch
+        import torch.nn.functional as F
+
+        labels = inputs["labels"]      # [B, L]
+        input_ids = inputs["input_ids"]  # [B, L]
+        B, L = labels.shape
+
+        outputs = model(
+            input_ids=input_ids,
+            attention_mask=inputs.get("attention_mask"),
+            use_cache=False,
+        )
+        logits = outputs.logits  # [B, L, V]
+
+        weights = torch.ones(B, L, device=labels.device)
+        corn_logit_list: list = []
+        corn_target_list: list[int] = []
+
+        for b in range(B):
+            ids = input_ids[b].tolist()
+            lbs = labels[b].tolist()
+            in_think = False
+            found_score = False
+            i = 0
+            while i < L:
+                tid = ids[i]
+                if tid == self._think_id:
+                    in_think = True
+                elif tid == self._end_id:
+                    in_think = False
+                    i += 1
+                    continue
+
+                if lbs[i] != -100 and in_think:
+                    weights[b, i] = self._think_weight
+
+                if not in_think and not found_score and lbs[i] != -100:
+                    for seq, int_class in self._band_seq_to_int_class.items():
+                        end = i + len(seq)
+                        if end <= L and tuple(ids[i:end]) == seq:
+                            if i > 0:
+                                # logits[b, i-1] predicts the first score token at i
+                                corn_logit_list.append(
+                                    _corn_logits_from_vocab(logits[b, i - 1], self._int_band_tok_ids)
+                                )
+                                corn_target_list.append(int_class)
+                            found_score = True
+                            break
+                i += 1
+
+        # Weighted CE — shift_weights[i] = weights[i+1] aligns with shift_labels[i]=labels[i+1]
+        shift_logits = logits[:, :-1].contiguous()
+        shift_labels = labels[:, 1:].contiguous()
+        shift_weights = weights[:, 1:].contiguous()
+
+        ce = F.cross_entropy(
+            shift_logits.view(-1, logits.size(-1)),
+            shift_labels.view(-1),
+            reduction="none",
+            ignore_index=-100,
+        ).view(B, L - 1)
+
+        valid = (shift_labels != -100).float()
+        ce_loss = (ce * shift_weights * valid).sum() / (shift_weights * valid).sum().clamp(min=1)
+
+        if corn_logit_list:
+            corn_logits = torch.stack(corn_logit_list)  # [N, 8]
+            corn_targets = torch.tensor(corn_target_list, device=labels.device)
+            corn_loss = self._corn(corn_logits, corn_targets)
+        else:
+            corn_loss = ce_loss.new_zeros(())
+
+        total = ce_loss + self._score_weight * corn_loss
+        return (total, outputs) if return_outputs else total
+
+
+# ------------------------------------------------------------------
 # Training implementation
 # ------------------------------------------------------------------
 
@@ -188,8 +361,18 @@ def _train(feedback_path: str, cfg: dict, output_dir: str) -> str:
 
     dataset = _build_dataset(df, tokenizer)
     _log(f"Dataset ready ({len(dataset)} items). Building trainer …")
+    _log(f"\n[train sample — full chat string]\n{dataset[0]['text']}\n{'─'*60}")
 
-    trainer = SFTTrainer(
+    think_weight = cfg.get("think_weight", 0.1)
+    score_weight = cfg.get("score_weight", 5.0)
+    _log(f"Loss weights — think: {think_weight}  score: {score_weight}")
+
+    from unsloth.chat_templates import train_on_responses_only
+
+    class _Trainer(_ScoringTrainer, SFTTrainer):
+        pass
+
+    trainer = _Trainer(
         model=model,
         args=SFTConfig(
             output_dir=output_dir,
@@ -206,8 +389,13 @@ def _train(feedback_path: str, cfg: dict, output_dir: str) -> str:
         ),
         train_dataset=dataset,
         dataset_text_field="text",
-        compute_loss_func=cfg.get("compute_loss_func"),
     )
+    trainer = train_on_responses_only(
+        trainer,
+        instruction_part="<|im_start|>user\n",
+        response_part="<|im_start|>assistant\n",
+    )
+    trainer._init_scoring(tokenizer, think_weight=think_weight, score_weight=score_weight)
     _log("Starting training …")
     trainer.train()
     _log("Training complete. Saving model …")
@@ -261,18 +449,25 @@ def _evaluate(model_path: str, eval_data_path: str, component: str | None = None
         for comp in target_components:
             messages = [{"role": "user", "content": _format_input(row["question"], row["essay"], comp)}]
             all_prompts.append(
-                tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+                tokenizer.apply_chat_template(
+                    messages, tokenize=False, add_generation_prompt=True, enable_thinking=False
+                )
             )
 
     all_generated: list[str] = []
+    logged_sample = False
     with torch.no_grad():
         for i in range(0, len(all_prompts), _EVAL_BATCH_SIZE):
             batch = all_prompts[i : i + _EVAL_BATCH_SIZE]
             enc = tokenizer(batch, return_tensors="pt", truncation=True, padding=True).to(model.device)
-            out = model.generate(**enc, do_sample=False)
+            out = model.generate(**enc, do_sample=False, max_new_tokens=2048)
             input_len = enc["input_ids"].shape[1]
             for o in out:
-                all_generated.append(tokenizer.decode(o[input_len:], skip_special_tokens=True).strip())
+                raw = tokenizer.decode(o[input_len:], skip_special_tokens=False).strip()
+                all_generated.append(raw)
+                if not logged_sample:
+                    print(f"\n[eval sample — full generation with thinking]\n{raw}\n{'─'*60}", flush=True)
+                    logged_sample = True
             _log(f"  eval batch {i // _EVAL_BATCH_SIZE + 1}/{-(-len(all_prompts) // _EVAL_BATCH_SIZE)}")
 
     y_true: list[float] = []
@@ -284,7 +479,8 @@ def _evaluate(model_path: str, eval_data_path: str, component: str | None = None
             raw = all_generated[i * n_components + j]
             try:
                 import re as _re
-                raw_clean = _re.sub(r"<think>.*?</think>", "", raw, flags=_re.DOTALL).strip()
+                raw_clean = _re.sub(r"<think>.*?</think>", "", raw, flags=_re.DOTALL)
+                raw_clean = _re.sub(r"<\|.*?\|>", "", raw_clean).strip()
                 pred = max(1.0, min(9.0, round(float(raw_clean) * 2) / 2))
                 component_preds.append(pred)
             except (ValueError, TypeError):
@@ -306,12 +502,21 @@ def _evaluate(model_path: str, eval_data_path: str, component: str | None = None
 def _build_dataset(df, tokenizer):
     from datasets import Dataset
 
+    has_feedback = "feedback_text" in df.columns
+
     def _to_chat(row):
+        score_str = str(_BANDS[row["label"]])
+        if has_feedback and row.get("feedback_text"):
+            assistant_content = f"<think>\n{row['feedback_text']}\n</think>\n{score_str}"
+        else:
+            assistant_content = score_str
         messages = [
             {"role": "user", "content": _format_input(row["question"], row["essay"], row["component"])},
-            {"role": "assistant", "content": str(_BANDS[row["label"]])},
+            {"role": "assistant", "content": assistant_content},
         ]
-        return tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=False)
+        return tokenizer.apply_chat_template(
+            messages, tokenize=False, add_generation_prompt=False, enable_thinking=False
+        )
 
     return Dataset.from_dict({
         "text": [_to_chat(row) for _, row in df.iterrows()],

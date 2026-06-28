@@ -214,6 +214,7 @@ def _build_messages(
     feedback_sample: str,
     iteration_history: str,
     critique: str | None,
+    trained_components: list[str] | None = None,
 ) -> list[Message]:
     system = (
         "You are the Chief Examiner for an IELTS automated scoring system. "
@@ -244,6 +245,15 @@ def _build_messages(
 
     parts = [
         f"## Session {session_id} — Iteration {iteration}",
+    ]
+    if trained_components:
+        parts.append(
+            f"\n### Trained Components This Iteration\n"
+            f"Only these components had a Scorer trained and evaluated: {', '.join(trained_components)}. "
+            f"Metrics and per_component_issues should focus on these components only. "
+            f"Do not diagnose or propose policy changes for untrained components."
+        )
+    parts += [
         f"\n{iteration_history}",
         "\n### Current Validation Metrics",
         json.dumps(val_metrics, indent=2),
@@ -346,6 +356,7 @@ async def run_diagnostic(
     model_config: ModelConfig,
     drive_path: Path,
     critique: str | None = None,
+    trained_components: list[str] | None = None,
 ) -> tuple[DiagnosticReport, HumanReviewProposal]:
     """Diagnose feedback quality and produce a HumanReviewProposal.
 
@@ -366,9 +377,10 @@ async def run_diagnostic(
     )
 
     fb_sample = _feedback_sample(feedback_df)
+    _skip = {"confusion_matrix"}
     metric_summary = {
-        **val_metrics,
-        **{f"test_{k}": v for k, v in test_metrics_summary.items()},
+        **{k: v for k, v in val_metrics.items() if k not in _skip},
+        **{f"test_{k}": v for k, v in test_metrics_summary.items() if k not in _skip},
     }
 
     messages = _build_messages(
@@ -382,6 +394,7 @@ async def run_diagnostic(
         feedback_sample=fb_sample,
         iteration_history=iteration_history,
         critique=critique,
+        trained_components=trained_components,
     )
 
     response = await provider.acomplete(messages, model=model_config.chair)
