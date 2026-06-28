@@ -7,6 +7,7 @@ GPU-only. Install [training] extras before importing:
 from __future__ import annotations
 
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -507,7 +508,9 @@ def _build_dataset(df, tokenizer):
     def _to_chat(row):
         score_str = str(_BANDS[row["label"]])
         if has_feedback and row.get("feedback_text"):
-            assistant_content = f"<think>\n{row['feedback_text']}\n</think>\n{score_str}"
+            clean = re.sub(r"<score>[^<]*</score>\s*", "", row["feedback_text"], flags=re.IGNORECASE)
+            clean = re.sub(r"<confidence>[^<]*</confidence>\s*", "", clean, flags=re.IGNORECASE).strip()
+            assistant_content = f"<think>\n{clean}\n</think>\n{score_str}"
         else:
             assistant_content = score_str
         messages = [
