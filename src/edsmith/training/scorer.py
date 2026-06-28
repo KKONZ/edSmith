@@ -383,7 +383,7 @@ def _train(feedback_path: str, cfg: dict, output_dir: str) -> str:
     _log(f"Dataset ready ({len(dataset)} items). Building trainer …")
     print(f"\n[train sample — full chat string]\n{dataset[0]['text']}\n{'─'*60}", flush=True)
 
-    think_weight = cfg.get("think_weight", 0.1)
+    think_weight = cfg.get("think_weight", 0.0)
     score_weight = cfg.get("score_weight", 1.0)
     _log(f"Loss weights — think: {think_weight}  score: {score_weight}")
 
