@@ -28,7 +28,7 @@ def _log(msg: str) -> None:
 
 def _default_config() -> dict:
     return {
-        "model_name": "unsloth/Qwen3-4B-unsloth-bnb-4bit",
+        "model_name": "unsloth/Qwen3-4B-Thinking-2507",
         "lora_r": 16,
         "lora_alpha": 16,
         "max_steps": 100,
@@ -524,6 +524,14 @@ def _build_dataset(df, tokenizer):
 
     has_feedback = "feedback_text" in df.columns
 
+    # Log the decimal → integer label mapping so we can verify it's correct.
+    unique_labels = sorted(df["label"].unique())
+    mapping_lines = [
+        f"  label_idx={idx}  band={_BANDS[idx]}  → score_str='{int(_BANDS[idx])}'"
+        for idx in unique_labels
+    ]
+    _log("Label → score token mapping:\n" + "\n".join(mapping_lines))
+
     def _to_chat(row):
         score_str = str(int(_BANDS[row["label"]]))
         if has_feedback and row.get("feedback_text"):
@@ -540,8 +548,17 @@ def _build_dataset(df, tokenizer):
             messages, tokenize=False, add_generation_prompt=False, enable_thinking=False
         )
 
+    texts = [_to_chat(row) for _, row in df.iterrows()]
+
+    # Spot-check: confirm score tokens are single tokens in this tokenizer.
+    for band_int in range(1, 10):
+        toks = tokenizer.encode(str(band_int), add_special_tokens=False)
+        if len(toks) != 1:
+            _log(f"WARNING: score token '{band_int}' encodes to {len(toks)} tokens: {toks}")
+    _log("Score token single-token check done.")
+
     return Dataset.from_dict({
-        "text": [_to_chat(row) for _, row in df.iterrows()],
+        "text": texts,
         "label": df["label"].tolist(),
     })
 
