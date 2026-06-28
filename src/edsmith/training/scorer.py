@@ -210,15 +210,15 @@ class _ScoringTrainer:
     _score_weight: float
     _think_id: int
     _end_id: int
-    _int_band_tok_ids: list[int]          # token IDs for "1".."9"
-    _band_seq_to_int_class: dict          # tuple(tok_ids) → int class 0–8
+    _int_band_tok_ids: list[int]          # token IDs for "4".."9"
+    _band_seq_to_int_class: dict          # tuple(tok_ids) → int class 0–5
     _corn: _CornLoss
 
     def _init_scoring(self, tokenizer, think_weight: float, score_weight: float) -> None:
         import torch.nn.functional as F  # noqa: F401 — trigger import check
         self._think_weight = think_weight
         self._score_weight = score_weight
-        self._corn = _CornLoss(num_classes=9)  # 9 integer bands: 1..9
+        self._corn = _CornLoss(num_classes=6)  # 6 bands: 4..9
 
         think_ids = tokenizer.encode("<think>", add_special_tokens=False)
         end_ids = tokenizer.encode("</think>", add_special_tokens=False)
@@ -229,13 +229,13 @@ class _ScoringTrainer:
         self._end_id = end_ids[0]
 
         self._int_band_tok_ids = [
-            tokenizer.encode(str(i), add_special_tokens=False)[0] for i in range(1, 10)
+            tokenizer.encode(str(i), add_special_tokens=False)[0] for i in range(4, 10)
         ]
-        # Map integer score strings "1"-"9" → CORN class 0–8.
-        # Training uses int(band) so "6" covers both 6.0 and 6.5 labels.
+        # Map integer score strings "4"-"9" → CORN class 0–5.
+        # Sub-4 bands are collapsed to "4" in _to_chat; 4.0/4.5 both → "4" → class 0.
         self._band_seq_to_int_class = {
-            tuple(tokenizer.encode(str(i), add_special_tokens=False)): i - 1
-            for i in range(1, 10)
+            tuple(tokenizer.encode(str(i), add_special_tokens=False)): i - 4
+            for i in range(4, 10)
         }
 
     def compute_loss(self, model, inputs, return_outputs=False, **kwargs):
@@ -525,15 +525,21 @@ def _build_dataset(df, tokenizer):
     has_feedback = "feedback_text" in df.columns
 
     # Log the decimal → integer label mapping so we can verify it's correct.
+    # Bands below 4 are collapsed to 4; decimals (e.g. 6.5) collapse to their integer floor.
+    def _band_to_score_str(idx: int) -> str:
+        return str(max(4, int(_BANDS[idx])))
+
     unique_labels = sorted(df["label"].unique())
-    mapping_lines = [
-        f"  label_idx={idx}  band={_BANDS[idx]}  → score_str='{int(_BANDS[idx])}'"
-        for idx in unique_labels
-    ]
-    _log("Label → score token mapping:\n" + "\n".join(mapping_lines))
+    seen_score_strs: set[str] = set()
+    mapping_lines = []
+    for idx in unique_labels:
+        s = _band_to_score_str(idx)
+        mapping_lines.append(f"  label_idx={idx}  band={_BANDS[idx]}  → score_str='{s}'" + (" (collapsed)" if _BANDS[idx] < 4 else ""))
+        seen_score_strs.add(s)
+    _log(f"Label → score token mapping ({len(seen_score_strs)} unique classes):\n" + "\n".join(mapping_lines))
 
     def _to_chat(row):
-        score_str = str(int(_BANDS[row["label"]]))
+        score_str = _band_to_score_str(row["label"])
         if has_feedback and row.get("feedback_text"):
             clean = re.sub(r"<score>[^<]*</score>\s*", "", row["feedback_text"], flags=re.IGNORECASE)
             clean = re.sub(r"<confidence>[^<]*</confidence>\s*", "", clean, flags=re.IGNORECASE).strip()
@@ -551,7 +557,7 @@ def _build_dataset(df, tokenizer):
     texts = [_to_chat(row) for _, row in df.iterrows()]
 
     # Spot-check: confirm score tokens are single tokens in this tokenizer.
-    for band_int in range(1, 10):
+    for band_int in range(4, 10):
         toks = tokenizer.encode(str(band_int), add_special_tokens=False)
         if len(toks) != 1:
             _log(f"WARNING: score token '{band_int}' encodes to {len(toks)} tokens: {toks}")
