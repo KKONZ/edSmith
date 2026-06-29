@@ -70,30 +70,53 @@ init_session → run_examiner_pass → [Colab: train → evaluate] → run_chief
 
 ## Architecture
 
-Two environments share a single Google Drive path:
+Two environments share a single Google Drive path. Claude Code is the session orchestrator — it calls MCP tools in sequence, handles the human review gate, and drives Colab cells via `run_cell`. All state lives on disk; every step is independently resumable.
 
+```mermaid
+flowchart TD
+    CC(["Claude Code"])
+
+    subgraph Local["Local Machine"]
+        Init["init_session"]
+        Exam["run_examiner_pass"]
+        Chief["run_chief_examiner"]
+        Approve["approve_proposal"]
+        Reject["reject_proposal"]
+    end
+
+    subgraph Colab["Colab GPU"]
+        Train["Train Scorer"]
+        Eval["Evaluate Scorer"]
+    end
+
+    Drive[("EDSMITH_DRIVE_PATH")]
+
+    CC -->|MCP| Local
+    CC -->|run_cell| Colab
+    Local <-.-> Drive
+    Colab <-.-> Drive
+
+    Init --> Exam
+    Exam --> Train
+    Train --> Eval
+    Eval --> Chief
+    Chief --> HR{Human Review}
+    HR -->|approve| Approve
+    HR -->|reject| Reject
+    Approve -->|next iter| Exam
+    Reject --> Chief
 ```
-Local machine                        Colab GPU
-─────────────────────────────────    ──────────────────────────────
-edSmith MCP server                   colab-mcp
-  init_session                         notebooks/edsmith_training.ipynb
-  run_chief_examiner                     Cell 2 — train Scorer
-  approve_proposal / reject_proposal     Cell 3 — evaluate, save metrics
-  (LLM API calls via OpenRouter)
-edsmith examiner-pass (CLI)
-  batch feedback generation
 
-        both read/write ──────────────→  EDSMITH_DRIVE_PATH/
-                                           sessions/{session_id}/
-                                             state.json
-                                             data/{train,val,test}.parquet
-                                             feedback_iter{N}.parquet
-                                             metrics_iter{N}.json
-                                             models/iter{N}/
-                                             proposals/iter{N}.json
-```
+**Drive file operations** (`sessions/{session_id}/`):
 
-Claude Code is the session orchestrator — it calls MCP tools in sequence, handles the human review gate, and drives Colab cells via `run_cell`. All state lives on disk; every step is independently resumable.
+| File | Written by | Read by |
+|---|---|---|
+| `state.json` | `init_session`, `approve_proposal` | `run_examiner_pass`, `run_chief_examiner` |
+| `data/*.parquet` | `run_examiner_pass` (first call only) | Train, Eval |
+| `feedback_iter{N}.parquet` | `run_examiner_pass` | Train |
+| `models/iter{N}/` | Train | Eval |
+| `metrics_iter{N}.json` | Eval | `run_chief_examiner` |
+| `proposals/iter{N}.json` | `run_chief_examiner`, `approve_proposal`, `reject_proposal` | `run_chief_examiner` (history) |
 
 ---
 
