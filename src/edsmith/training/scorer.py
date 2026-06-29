@@ -389,19 +389,21 @@ def _train(feedback_path: str, cfg: dict, output_dir: str) -> str:
     )
     _log(f"LoRA applied. hidden_size={model.config.hidden_size}")
 
-    dataset = _build_dataset(df, tokenizer)
+    dataset = _build_dataset(df, tokenizer, max_len=cfg.get("max_seq_length", 2048))
     _log(f"Dataset ready ({len(dataset)} items). Building trainer …")
-    print(f"\n[train sample — full chat string]\n{dataset[0]['text']}\n{'─'*60}", flush=True)
 
     think_weight = cfg.get("think_weight", 0.0)
     score_weight = cfg.get("score_weight", 1.0)
     _log(f"Loss weights — think: {think_weight}  score: {score_weight}")
 
-    from unsloth.chat_templates import train_on_responses_only
+    from transformers import DataCollatorForSeq2Seq
 
     class _Trainer(_ScoringTrainer, SFTTrainer):
         pass
 
+    data_collator = DataCollatorForSeq2Seq(
+        tokenizer=tokenizer, model=model, padding=True, label_pad_token_id=-100,
+    )
     trainer = _Trainer(
         model=model,
         args=SFTConfig(
@@ -418,12 +420,7 @@ def _train(feedback_path: str, cfg: dict, output_dir: str) -> str:
             report_to="none",
         ),
         train_dataset=dataset,
-        dataset_text_field="text",
-    )
-    trainer = train_on_responses_only(
-        trainer,
-        instruction_part="<|im_start|>user\n",
-        response_part="<|im_start|>assistant\n",
+        data_collator=data_collator,
     )
     trainer._init_scoring(tokenizer, think_weight=think_weight, score_weight=score_weight)
     _log("Starting training …")
