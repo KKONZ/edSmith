@@ -491,11 +491,12 @@ def _evaluate(model_path: str, eval_data_path: str, component: str | None = None
             last_logits = out.logits[:, -1, :]  # [B, V] — logits at probe position
             for b in range(last_logits.shape[0]):
                 corn_logits = _corn_logits_from_vocab(last_logits[b], band_tok_ids)  # [C-1]
-                pred_class = int((torch.sigmoid(corn_logits) > 0.5).sum().clamp(0, _num_classes - 1).item())
+                probas = torch.cumprod(torch.sigmoid(corn_logits), dim=0)
+                pred_class = int((probas > 0.5).sum().clamp(0, _num_classes - 1).item())
                 pred_band = float(_base_band + pred_class)
                 all_pred_bands.append(pred_band)
                 if not logged_sample:
-                    _log(f"[eval probe] corn_logits={[round(x, 3) for x in corn_logits.tolist()]}  pred_class={pred_class}  pred_band={pred_band}")
+                    _log(f"[eval probe] corn_logits={[round(x, 3) for x in corn_logits.tolist()]}  cumprod_probas={[round(x, 3) for x in probas.tolist()]}  pred_class={pred_class}  pred_band={pred_band}")
                     logged_sample = True
             _log(f"  eval batch {i // _EVAL_BATCH_SIZE + 1}/{-(-len(all_prompts) // _EVAL_BATCH_SIZE)}")
 
