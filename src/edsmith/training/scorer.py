@@ -118,8 +118,9 @@ def evaluate(
     import numpy as np
 
     df = pd.read_parquet(data_path)
+    _base = 4  # matches _base_band in _evaluate
     valid_rows = [row for _, row in df.iterrows() if _parse_band_val(row.get("band")) is not None]
-    y_true = [_parse_band_val(row["band"]) for row in valid_rows]
+    y_true = [float(max(_base, int(_parse_band_val(row["band"])))) for row in valid_rows]
 
     per_component_preds: dict[str, list[float]] = {}
     for comp, path in component_dirs.items():
@@ -511,7 +512,8 @@ def _evaluate(model_path: str, eval_data_path: str, component: str | None = None
     y_pred: list[float] = []
     for i, band in enumerate(valid_bands):
         comp_preds = [all_pred_bands[i * n_components + j] for j in range(n_components)]
-        y_true.append(band)
+        # Collapse to the same integer scale used in training (max(4, floor(band))).
+        y_true.append(float(max(_base_band, int(band))))
         y_pred.append(round(sum(comp_preds) / len(comp_preds) * 2) / 2)
 
     _log(f"Evaluation complete. {len(y_true)} predictions.")
