@@ -15,8 +15,6 @@ from edsmith.data.parser import COMPONENT_HEADINGS
 
 _BANDS: list[float] = [b / 2 for b in range(2, 19)]  # 1.0 … 9.0  (17 values)
 _BAND_TO_IDX: dict[float, int] = {b: i for i, b in enumerate(_BANDS)}
-_EVAL_BATCH_SIZE = 8
-
 # Components trained as separate models in multi-component mode.
 # task_response is excluded: its score correlates directly with the overall band.
 _SCORER_COMPONENTS = ["coherence", "lexical", "grammar"]
@@ -443,6 +441,7 @@ def _train(feedback_path: str, cfg: dict, output_dir: str) -> str:
 
 def _evaluate(model_path: str, eval_data_path: str, component: str | None = None) -> tuple[list[float], list[float]]:
     from unsloth import FastLanguageModel
+    from transformers import StoppingCriteria, StoppingCriteriaList
     import pandas as pd
     import torch
 
@@ -486,27 +485,51 @@ def _evaluate(model_path: str, eval_data_path: str, component: str | None = None
 
     n_components = len(target_components)
     all_pred_bands: list[float] = []
-    _GEN_BATCH_SIZE = 2
+    _GEN_BATCH_SIZE = 8
+
+    class _StopOnScore(StoppingCriteria):
+        """Stop each sequence as soon as a band token appears after </think>."""
+        def __init__(self, end_think_id: int, band_tok_ids: list[int], input_len: int):
+            self._end_think_id = end_think_id
+            self._band_set = set(band_tok_ids)
+            self._input_len = input_len
+            self._seen_end_think: dict[int, int] = {}
+
+        def __call__(self, input_ids, scores, **kwargs):
+            done = []
+            for i in range(input_ids.shape[0]):
+                new_ids = input_ids[i, self._input_len:].tolist()
+                if i not in self._seen_end_think and self._end_think_id in new_ids:
+                    self._seen_end_think[i] = new_ids.index(self._end_think_id)
+                if i in self._seen_end_think:
+                    after = new_ids[self._seen_end_think[i] + 1:]
+                    done.append(any(t in self._band_set for t in after))
+                else:
+                    done.append(False)
+            return all(done)
 
     with torch.no_grad():
         for i in range(0, len(all_prompts), _GEN_BATCH_SIZE):
             batch = all_prompts[i : i + _GEN_BATCH_SIZE]
             enc = tokenizer(batch, return_tensors="pt", truncation=True, padding=True, max_length=2048).to(model.device)
+            input_len = enc["input_ids"].shape[1]
             out = model.generate(
                 input_ids=enc["input_ids"],
                 attention_mask=enc["attention_mask"],
-                max_new_tokens=768,
+                max_new_tokens=4096,
                 do_sample=False,
                 pad_token_id=tokenizer.pad_token_id,
+                stopping_criteria=StoppingCriteriaList([
+                    _StopOnScore(end_think_id, band_tok_ids, input_len)
+                ]),
             )
-            input_len = enc["input_ids"].shape[1]
             for b in range(len(batch)):
                 new_ids = out[b, input_len:].tolist()
                 pred_band = _parse_score_from_ids(new_ids, end_think_id, band_tok_ids, _base_band)
                 all_pred_bands.append(pred_band)
                 if i == 0 and b == 0:
                     sample_text = tokenizer.decode(new_ids, skip_special_tokens=False)
-                    _log(f"[eval sample] {repr(sample_text[:200])}  → pred_band={pred_band}")
+                    _log(f"[eval sample] {repr(sample_text[:300])}  → pred_band={pred_band}")
             _log(f"  eval batch {i // _GEN_BATCH_SIZE + 1}/{-(-len(all_prompts) // _GEN_BATCH_SIZE)}")
 
     y_true: list[float] = []
@@ -522,10 +545,9 @@ def _evaluate(model_path: str, eval_data_path: str, component: str | None = None
 
 def _parse_score_from_ids(new_ids: list[int], end_think_id: int, band_tok_ids: list[int], default: int) -> float:
     """Find the first band token (4-9) after </think> in generated token IDs."""
-    if end_think_id in new_ids:
-        search_ids = new_ids[new_ids.index(end_think_id) + 1:]
-    else:
-        search_ids = new_ids
+    if end_think_id not in new_ids:
+        return float(default)  # cut off before </think> — don't scan thinking noise
+    search_ids = new_ids[new_ids.index(end_think_id) + 1:]
     for tok_id in search_ids:
         if tok_id in band_tok_ids:
             return float(band_tok_ids.index(tok_id) + 4)
