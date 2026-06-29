@@ -434,7 +434,6 @@ def _train(feedback_path: str, cfg: dict, output_dir: str) -> str:
 # ------------------------------------------------------------------
 
 def _evaluate(model_path: str, eval_data_path: str, component: str | None = None) -> tuple[list[float], list[float]]:
-    import numpy as np
     from unsloth import FastLanguageModel
     import pandas as pd
     import torch
@@ -455,63 +454,59 @@ def _evaluate(model_path: str, eval_data_path: str, component: str | None = None
     tokenizer.padding_side = "left"
 
     target_components = [component] if component else list(COMPONENT_HEADINGS.keys())
-    n_components = len(target_components)
     _log(f"Evaluating component(s): {target_components}")
 
+    # CORN decode config — must match training (bands 4-9, 6 classes)
+    _base_band = 4
+    _num_classes = 6
+    band_tok_ids = [tokenizer.encode(str(i), add_special_tokens=False)[0] for i in range(_base_band, _base_band + _num_classes)]
+
+    # Build probe prompts: user turn + generation prefix + </think>\n
+    # The model is placed at exactly the position where it would generate the score token.
+    # We then read logits at that position and CORN-decode — no generation needed.
     valid_bands: list[float] = []
     all_prompts: list[str] = []
     for _, row in df.iterrows():
         try:
             band = float(row["band"])
-        except ValueError:
+        except (ValueError, TypeError):
             continue
         valid_bands.append(band)
         for comp in target_components:
             messages = [{"role": "user", "content": _format_input(row["question"], row["essay"], comp)}]
-            all_prompts.append(
-                tokenizer.apply_chat_template(
-                    messages, tokenize=False, add_generation_prompt=True, enable_thinking=True
-                )
+            base = tokenizer.apply_chat_template(
+                messages, tokenize=False, add_generation_prompt=True, enable_thinking=True
             )
+            all_prompts.append(base + "</think>\n")
 
-    all_generated: list[str] = []
+    n_components = len(target_components)
+    all_pred_bands: list[float] = []
     logged_sample = False
+
     with torch.no_grad():
         for i in range(0, len(all_prompts), _EVAL_BATCH_SIZE):
             batch = all_prompts[i : i + _EVAL_BATCH_SIZE]
-            enc = tokenizer(batch, return_tensors="pt", truncation=True, padding=True).to(model.device)
-            out = model.generate(**enc, do_sample=False, max_new_tokens=2048)
-            input_len = enc["input_ids"].shape[1]
-            for o in out:
-                raw = tokenizer.decode(o[input_len:], skip_special_tokens=False).strip()
-                all_generated.append(raw)
+            enc = tokenizer(batch, return_tensors="pt", truncation=True, padding=True, max_length=2048).to(model.device)
+            out = model(input_ids=enc["input_ids"], attention_mask=enc["attention_mask"], use_cache=False)
+            last_logits = out.logits[:, -1, :]  # [B, V] — logits at probe position
+            for b in range(last_logits.shape[0]):
+                corn_logits = _corn_logits_from_vocab(last_logits[b], band_tok_ids)  # [C-1]
+                pred_class = int((torch.sigmoid(corn_logits) > 0.5).sum().clamp(0, _num_classes - 1).item())
+                pred_band = float(_base_band + pred_class)
+                all_pred_bands.append(pred_band)
                 if not logged_sample:
-                    print(f"\n[eval sample — full generation with thinking]\n{raw}\n{'─'*60}", flush=True)
+                    _log(f"[eval probe] corn_logits={[round(x, 3) for x in corn_logits.tolist()]}  pred_class={pred_class}  pred_band={pred_band}")
                     logged_sample = True
             _log(f"  eval batch {i // _EVAL_BATCH_SIZE + 1}/{-(-len(all_prompts) // _EVAL_BATCH_SIZE)}")
 
     y_true: list[float] = []
     y_pred: list[float] = []
-    n_skipped = 0
     for i, band in enumerate(valid_bands):
-        component_preds: list[float] = []
-        for j in range(n_components):
-            raw = all_generated[i * n_components + j]
-            try:
-                import re as _re
-                raw_clean = _re.sub(r"<think>.*?</think>", "", raw, flags=_re.DOTALL)
-                raw_clean = _re.sub(r"<\|.*?\|>", "", raw_clean).strip()
-                pred = max(1.0, min(9.0, round(float(raw_clean) * 2) / 2))
-                component_preds.append(pred)
-            except (ValueError, TypeError):
-                _log(f"  unparseable: row {i} comp {j} → {raw!r}")
-        if not component_preds:
-            n_skipped += 1
-            continue
+        comp_preds = [all_pred_bands[i * n_components + j] for j in range(n_components)]
         y_true.append(band)
-        y_pred.append(round(float(np.mean(component_preds)) * 2) / 2)
+        y_pred.append(round(sum(comp_preds) / len(comp_preds) * 2) / 2)
 
-    _log(f"Evaluation complete. {len(y_true)} predictions ({n_skipped} rows skipped).")
+    _log(f"Evaluation complete. {len(y_true)} predictions.")
     return y_true, y_pred
 
 
