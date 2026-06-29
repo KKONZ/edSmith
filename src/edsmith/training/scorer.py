@@ -301,22 +301,25 @@ class _ScoringTrainer:
                             break
                 i += 1
 
-        # CE — think tokens only, scaled by think_weight.
-        # shift_think[b, j] = think_mask[b, j+1]: was the predicted token inside <think>?
+        # CE — all labeled tokens, with think tokens downweighted by think_weight.
+        # Non-think labeled tokens (score digit, <|im_end|>) receive full CE so the
+        # model learns to emit a bare integer then stop, not a fraction + explanation.
         shift_logits = logits[:, :-1].contiguous()
         shift_labels = labels[:, 1:].contiguous()
         shift_think = think_mask[:, 1:].contiguous()
 
-        ce_loss = logits.new_zeros(())
-        if self._think_weight > 0:
-            ce_per_token = F.cross_entropy(
-                shift_logits.view(-1, logits.size(-1)),
-                shift_labels.view(-1),
-                reduction="none",
-                ignore_index=-100,
-            ).view(B, L - 1)
-            n_think = shift_think.sum().clamp(min=1)
-            ce_loss = self._think_weight * (ce_per_token * shift_think).sum() / n_think
+        ce_per_token = F.cross_entropy(
+            shift_logits.view(-1, logits.size(-1)),
+            shift_labels.view(-1),
+            reduction="none",
+            ignore_index=-100,
+        ).view(B, L - 1)
+        # think_weight for think tokens, 1.0 for non-think labeled tokens
+        token_weights = shift_think * self._think_weight + (1.0 - shift_think)
+        labeled_mask = (shift_labels != -100).float()
+        n_labeled = labeled_mask.sum().clamp(min=1)
+        ce_loss = (ce_per_token * token_weights * labeled_mask).sum() / n_labeled
+        n_think = shift_think.sum().clamp(min=1)
 
         # CORN — ordinal regression on score token positions only
         corn_loss = logits.new_zeros(())
