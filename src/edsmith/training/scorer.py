@@ -464,14 +464,11 @@ def _evaluate(model_path: str, eval_data_path: str, component: str | None = None
     target_components = [component] if component else list(COMPONENT_HEADINGS.keys())
     _log(f"Evaluating component(s): {target_components}")
 
-    # CORN decode config — must match training (bands 4-9, 6 classes)
     _base_band = 4
     _num_classes = 6
     band_tok_ids = [tokenizer.encode(str(i), add_special_tokens=False)[0] for i in range(_base_band, _base_band + _num_classes)]
+    end_think_id = tokenizer.encode("</think>", add_special_tokens=False)[0]
 
-    # Build probe prompts: user turn + generation prefix + </think>\n
-    # The model is placed at exactly the position where it would generate the score token.
-    # We then read logits at that position and CORN-decode — no generation needed.
     valid_bands: list[float] = []
     all_prompts: list[str] = []
     for _, row in df.iterrows():
@@ -482,42 +479,57 @@ def _evaluate(model_path: str, eval_data_path: str, component: str | None = None
         valid_bands.append(band)
         for comp in target_components:
             messages = [{"role": "user", "content": _format_input(row["question"], row["essay"], comp)}]
-            base = tokenizer.apply_chat_template(
+            prompt = tokenizer.apply_chat_template(
                 messages, tokenize=False, add_generation_prompt=True, enable_thinking=True
             )
-            all_prompts.append(base + "</think>\n")
+            all_prompts.append(prompt)
 
     n_components = len(target_components)
     all_pred_bands: list[float] = []
-    logged_sample = False
+    _GEN_BATCH_SIZE = 2
 
     with torch.no_grad():
-        for i in range(0, len(all_prompts), _EVAL_BATCH_SIZE):
-            batch = all_prompts[i : i + _EVAL_BATCH_SIZE]
+        for i in range(0, len(all_prompts), _GEN_BATCH_SIZE):
+            batch = all_prompts[i : i + _GEN_BATCH_SIZE]
             enc = tokenizer(batch, return_tensors="pt", truncation=True, padding=True, max_length=2048).to(model.device)
-            out = model(input_ids=enc["input_ids"], attention_mask=enc["attention_mask"], use_cache=False)
-            last_logits = out.logits[:, -1, :]  # [B, V] — logits at probe position
-            for b in range(last_logits.shape[0]):
-                corn_logits = _corn_logits_from_vocab(last_logits[b], band_tok_ids)  # [C-1]
-                probas = torch.cumprod(torch.sigmoid(corn_logits), dim=0)
-                pred_class = int((probas > 0.5).sum().clamp(0, _num_classes - 1).item())
-                pred_band = float(_base_band + pred_class)
+            out = model.generate(
+                input_ids=enc["input_ids"],
+                attention_mask=enc["attention_mask"],
+                max_new_tokens=768,
+                do_sample=False,
+                pad_token_id=tokenizer.pad_token_id,
+            )
+            input_len = enc["input_ids"].shape[1]
+            for b in range(len(batch)):
+                new_ids = out[b, input_len:].tolist()
+                pred_band = _parse_score_from_ids(new_ids, end_think_id, band_tok_ids, _base_band)
                 all_pred_bands.append(pred_band)
-                if not logged_sample:
-                    _log(f"[eval probe] corn_logits={[round(x, 3) for x in corn_logits.tolist()]}  cumprod_probas={[round(x, 3) for x in probas.tolist()]}  pred_class={pred_class}  pred_band={pred_band}")
-                    logged_sample = True
-            _log(f"  eval batch {i // _EVAL_BATCH_SIZE + 1}/{-(-len(all_prompts) // _EVAL_BATCH_SIZE)}")
+                if i == 0 and b == 0:
+                    sample_text = tokenizer.decode(new_ids, skip_special_tokens=False)
+                    _log(f"[eval sample] {repr(sample_text[:200])}  → pred_band={pred_band}")
+            _log(f"  eval batch {i // _GEN_BATCH_SIZE + 1}/{-(-len(all_prompts) // _GEN_BATCH_SIZE)}")
 
     y_true: list[float] = []
     y_pred: list[float] = []
     for i, band in enumerate(valid_bands):
         comp_preds = [all_pred_bands[i * n_components + j] for j in range(n_components)]
-        # Collapse to the same integer scale used in training (max(4, floor(band))).
         y_true.append(float(max(_base_band, int(band))))
         y_pred.append(round(sum(comp_preds) / len(comp_preds) * 2) / 2)
 
     _log(f"Evaluation complete. {len(y_true)} predictions.")
     return y_true, y_pred
+
+
+def _parse_score_from_ids(new_ids: list[int], end_think_id: int, band_tok_ids: list[int], default: int) -> float:
+    """Find the first band token (4-9) after </think> in generated token IDs."""
+    if end_think_id in new_ids:
+        search_ids = new_ids[new_ids.index(end_think_id) + 1:]
+    else:
+        search_ids = new_ids
+    for tok_id in search_ids:
+        if tok_id in band_tok_ids:
+            return float(band_tok_ids.index(tok_id) + 4)
+    return float(default)
 
 
 # ------------------------------------------------------------------
