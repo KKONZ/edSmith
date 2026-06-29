@@ -82,11 +82,15 @@ def evaluate(
     iteration: int,
     split: str,
     drive_path: Path,
+    enable_thinking: bool = True,
 ) -> tuple[list[float], list[float]]:
     """Evaluate Scorer on val or test split.
 
     Auto-detects single vs multi-component from the models directory structure.
     Multi-component: loads each component model, averages predictions for band.
+
+    enable_thinking=True  — inject <think>\\n prefix; model generates feedback then score.
+    enable_thinking=False — inject <think>\\n</think>\\n prefix; model outputs score digit only.
 
     Reads:  {drive_path}/sessions/{session_id}/models/iter{n}/{component}/
             {drive_path}/sessions/{session_id}/data/{split}.parquet
@@ -105,11 +109,11 @@ def evaluate(
 
     if not component_dirs:
         # Legacy: single model at iter root
-        return _evaluate(str(models_dir), data_path)
+        return _evaluate(str(models_dir), data_path, enable_thinking=enable_thinking)
 
     if len(component_dirs) == 1:
         comp, path = next(iter(component_dirs.items()))
-        return _evaluate(path, data_path, component=comp)
+        return _evaluate(path, data_path, component=comp, enable_thinking=enable_thinking)
 
     # Multi-component: evaluate each model, average predictions per essay
     import pandas as pd
@@ -122,7 +126,7 @@ def evaluate(
 
     per_component_preds: dict[str, list[float]] = {}
     for comp, path in component_dirs.items():
-        _, comp_preds = _evaluate(path, data_path, component=comp)
+        _, comp_preds = _evaluate(path, data_path, component=comp, enable_thinking=enable_thinking)
         per_component_preds[comp] = comp_preds
 
     # Average across components per essay
@@ -137,7 +141,10 @@ def evaluate(
 
 def _parse_band_val(val) -> float | None:
     try:
-        return float(str(val).strip())
+        s = str(val).strip()
+        if s.startswith("<"):
+            s = s.lstrip("<").strip()
+        return float(s)
     except (ValueError, TypeError):
         return None
 
@@ -439,13 +446,18 @@ def _train(feedback_path: str, cfg: dict, output_dir: str) -> str:
 # Evaluation implementation
 # ------------------------------------------------------------------
 
-def _evaluate(model_path: str, eval_data_path: str, component: str | None = None) -> tuple[list[float], list[float]]:
+def _evaluate(
+    model_path: str,
+    eval_data_path: str,
+    component: str | None = None,
+    enable_thinking: bool = True,
+) -> tuple[list[float], list[float]]:
     from unsloth import FastLanguageModel
     from transformers import StoppingCriteria, StoppingCriteriaList
     import pandas as pd
     import torch
 
-    _log(f"Evaluating model at {model_path} …")
+    _log(f"Evaluating model at {model_path}  enable_thinking={enable_thinking} …")
     edsmith_cfg_path = Path(model_path) / "edsmith_config.json"
     if component is None and edsmith_cfg_path.exists():
         component = json.loads(edsmith_cfg_path.read_text()).get("component")
@@ -466,21 +478,28 @@ def _evaluate(model_path: str, eval_data_path: str, component: str | None = None
     _base_band = 4
     _num_classes = 6
     band_tok_ids = [tokenizer.encode(str(i), add_special_tokens=False)[0] for i in range(_base_band, _base_band + _num_classes)]
+    band_tok_set = set(band_tok_ids)
     end_think_id = tokenizer.encode("</think>", add_special_tokens=False)[0]
+
+    # Prefix appended after the generation prompt to match training format.
+    # Training target: <think>\n{feedback}\n</think>\n{score}
+    # Thinking on:  inject <think>\n  — model generates feedback then score
+    # Thinking off: inject <think>\n</think>\n — skip to score output immediately
+    think_prefix = "<think>\n" if enable_thinking else "<think>\n</think>\n"
 
     valid_bands: list[float] = []
     all_prompts: list[str] = []
     for _, row in df.iterrows():
-        try:
-            band = float(row["band"])
-        except (ValueError, TypeError):
+        band = _parse_band_val(row.get("band"))
+        if band is None:
             continue
         valid_bands.append(band)
         for comp in target_components:
             messages = [{"role": "user", "content": _format_input(row["question"], row["essay"], comp)}]
+            # enable_thinking=False in template — prefix is injected manually above
             prompt = tokenizer.apply_chat_template(
-                messages, tokenize=False, add_generation_prompt=True, enable_thinking=True
-            )
+                messages, tokenize=False, add_generation_prompt=True, enable_thinking=False
+            ) + think_prefix
             all_prompts.append(prompt)
 
     n_components = len(target_components)
@@ -508,24 +527,38 @@ def _evaluate(model_path: str, eval_data_path: str, component: str | None = None
                     done.append(False)
             return all(done)
 
+    max_new_tokens = 4096 if enable_thinking else 10
+
     with torch.no_grad():
         for i in range(0, len(all_prompts), _GEN_BATCH_SIZE):
             batch = all_prompts[i : i + _GEN_BATCH_SIZE]
             enc = tokenizer(batch, return_tensors="pt", truncation=True, padding=True, max_length=2048).to(model.device)
             input_len = enc["input_ids"].shape[1]
-            out = model.generate(
+
+            gen_kwargs: dict = dict(
                 input_ids=enc["input_ids"],
                 attention_mask=enc["attention_mask"],
-                max_new_tokens=4096,
+                max_new_tokens=max_new_tokens,
                 do_sample=False,
                 pad_token_id=tokenizer.pad_token_id,
-                stopping_criteria=StoppingCriteriaList([
-                    _StopOnScore(end_think_id, band_tok_ids, input_len)
-                ]),
             )
+            if enable_thinking:
+                gen_kwargs["stopping_criteria"] = StoppingCriteriaList([
+                    _StopOnScore(end_think_id, band_tok_ids, input_len)
+                ])
+
+            out = model.generate(**gen_kwargs)
+
             for b in range(len(batch)):
                 new_ids = out[b, input_len:].tolist()
-                pred_band = _parse_score_from_ids(new_ids, end_think_id, band_tok_ids, _base_band)
+                if enable_thinking:
+                    pred_band = _parse_score_from_ids(new_ids, end_think_id, band_tok_ids, _base_band)
+                else:
+                    # Score is the first band token in the (very short) output
+                    pred_band = next(
+                        (float(band_tok_ids.index(t) + _base_band) for t in new_ids if t in band_tok_set),
+                        float(_base_band),
+                    )
                 all_pred_bands.append(pred_band)
                 if i == 0 and b == 0:
                     sample_text = tokenizer.decode(new_ids, skip_special_tokens=False)
