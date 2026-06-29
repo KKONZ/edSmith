@@ -525,13 +525,11 @@ def _evaluate(model_path: str, eval_data_path: str, component: str | None = None
 # Dataset helpers
 # ------------------------------------------------------------------
 
-def _build_dataset(df, tokenizer):
+def _build_dataset(df, tokenizer, max_len: int = 2048):
     from datasets import Dataset
 
     has_feedback = "feedback_text" in df.columns
 
-    # Log the decimal → integer label mapping so we can verify it's correct.
-    # Bands below 4 are collapsed to 4; decimals (e.g. 6.5) collapse to their integer floor.
     def _band_to_score_str(idx: int) -> str:
         return str(max(4, int(_BANDS[idx])))
 
@@ -544,24 +542,6 @@ def _build_dataset(df, tokenizer):
         seen_score_strs.add(s)
     _log(f"Label → score token mapping ({len(seen_score_strs)} unique classes):\n" + "\n".join(mapping_lines))
 
-    def _to_chat(row):
-        score_str = _band_to_score_str(row["label"])
-        if has_feedback and row.get("feedback_text"):
-            clean = re.sub(r"<score>[^<]*</score>\s*", "", row["feedback_text"], flags=re.IGNORECASE)
-            clean = re.sub(r"<confidence>[^<]*</confidence>\s*", "", clean, flags=re.IGNORECASE).strip()
-            assistant_content = f"<think>\n{clean}\n</think>\n{score_str}"
-        else:
-            assistant_content = score_str
-        messages = [
-            {"role": "user", "content": _format_input(row["question"], row["essay"], row["component"])},
-            {"role": "assistant", "content": assistant_content},
-        ]
-        return tokenizer.apply_chat_template(
-            messages, tokenize=False, add_generation_prompt=False, enable_thinking=False
-        )
-
-    texts = [_to_chat(row) for _, row in df.iterrows()]
-
     # Spot-check: confirm score tokens are single tokens in this tokenizer.
     for band_int in range(4, 10):
         toks = tokenizer.encode(str(band_int), add_special_tokens=False)
@@ -569,10 +549,46 @@ def _build_dataset(df, tokenizer):
             _log(f"WARNING: score token '{band_int}' encodes to {len(toks)} tokens: {toks}")
     _log("Score token single-token check done.")
 
-    return Dataset.from_dict({
-        "text": texts,
-        "label": df["label"].tolist(),
-    })
+    all_input_ids: list[list[int]] = []
+    all_labels: list[list[int]] = []
+
+    for _, row in df.iterrows():
+        score_str = _band_to_score_str(row["label"])
+
+        # Instruction prefix — used to find the response boundary for label masking.
+        instruction_text = tokenizer.apply_chat_template(
+            [{"role": "user", "content": _format_input(row["question"], row["essay"], row["component"])}],
+            tokenize=False, add_generation_prompt=True, enable_thinking=False,
+        )
+        n_instruction = len(tokenizer.encode(instruction_text, add_special_tokens=False))
+
+        # Full sequence (instruction + assistant response).
+        if has_feedback and row.get("feedback_text"):
+            clean = re.sub(r"<score>[^<]*</score>\s*", "", row["feedback_text"], flags=re.IGNORECASE)
+            clean = re.sub(r"<confidence>[^<]*</confidence>\s*", "", clean, flags=re.IGNORECASE).strip()
+            assistant_content = f"<think>\n{clean}\n</think>\n{score_str}"
+        else:
+            assistant_content = score_str
+        full_text = tokenizer.apply_chat_template(
+            [
+                {"role": "user", "content": _format_input(row["question"], row["essay"], row["component"])},
+                {"role": "assistant", "content": assistant_content},
+            ],
+            tokenize=False, add_generation_prompt=False, enable_thinking=False,
+        )
+        full_ids = tokenizer.encode(full_text, add_special_tokens=False)[:max_len]
+
+        # Mask instruction tokens with -100 so compute_loss only sees response positions.
+        cut = min(n_instruction, len(full_ids))
+        labels = [-100] * cut + full_ids[cut:]
+
+        all_input_ids.append(full_ids)
+        all_labels.append(labels)
+
+    sample_text = tokenizer.decode(all_input_ids[0])
+    print(f"\n[train sample — full chat string]\n{sample_text}\n{'─'*60}", flush=True)
+
+    return Dataset.from_dict({"input_ids": all_input_ids, "labels": all_labels})
 
 
 def _format_input(question: str, essay: str, component: str) -> str:
