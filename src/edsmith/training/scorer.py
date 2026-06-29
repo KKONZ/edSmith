@@ -334,6 +334,16 @@ class _ScoringTrainer:
 
         return (total, outputs) if return_outputs else total
 
+    def training_step(self, model, inputs, num_items_in_batch=None):
+        """Override to ensure our CORN compute_loss drives backprop, not Unsloth's CE."""
+        model.train()
+        inputs = self._prepare_inputs(inputs)
+        loss = self.compute_loss(model, inputs)
+        if self.args.n_gpu > 1:
+            loss = loss.mean()
+        self.accelerator.backward(loss)
+        return loss.detach() / self.args.gradient_accumulation_steps
+
 
 # ------------------------------------------------------------------
 # Training implementation
