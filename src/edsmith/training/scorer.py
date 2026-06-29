@@ -383,6 +383,8 @@ def _train(feedback_path: str, cfg: dict, output_dir: str) -> str:
         model_name=cfg["model_name"],
         load_in_4bit=True,
     )
+    from unsloth.chat_templates import get_chat_template
+    tokenizer = get_chat_template(tokenizer, chat_template="qwen3-thinking")
     _log("Model loaded. Applying LoRA …")
     model = FastLanguageModel.get_peft_model(
         model,
@@ -470,6 +472,8 @@ def _evaluate(
         load_in_4bit=True,
     )
     FastLanguageModel.for_inference(model)
+    from unsloth.chat_templates import get_chat_template
+    tokenizer = get_chat_template(tokenizer, chat_template="qwen3-thinking")
     tokenizer.padding_side = "left"
 
     target_components = [component] if component else list(COMPONENT_HEADINGS.keys())
@@ -481,11 +485,10 @@ def _evaluate(
     band_tok_set = set(band_tok_ids)
     end_think_id = tokenizer.encode("</think>", add_special_tokens=False)[0]
 
-    # Prefix appended after the generation prompt to match training format.
-    # Training target: <think>\n{feedback}\n</think>\n{score}
-    # Thinking on:  inject <think>\n  — model generates feedback then score
-    # Thinking off: inject <think>\n</think>\n — skip to score output immediately
-    think_prefix = "<think>\n" if enable_thinking else "<think>\n</think>\n"
+    # qwen3-thinking template's generation prompt already ends with <think>\n.
+    # For fast eval (enable_thinking=False) we immediately close the think block
+    # so the model outputs a score digit only.
+    close_prefix = "" if enable_thinking else "</think>\n"
 
     valid_bands: list[float] = []
     all_prompts: list[str] = []
@@ -496,10 +499,9 @@ def _evaluate(
         valid_bands.append(band)
         for comp in target_components:
             messages = [{"role": "user", "content": _format_input(row["question"], row["essay"], comp)}]
-            # enable_thinking=False in template — prefix is injected manually above
             prompt = tokenizer.apply_chat_template(
-                messages, tokenize=False, add_generation_prompt=True, enable_thinking=False
-            ) + think_prefix
+                messages, tokenize=False, add_generation_prompt=True
+            ) + close_prefix
             all_prompts.append(prompt)
 
     n_components = len(target_components)
@@ -622,13 +624,17 @@ def _build_dataset(df, tokenizer, max_len: int = 2048):
         score_str = _band_to_score_str(row["label"])
 
         # Instruction prefix — used to find the response boundary for label masking.
+        # qwen3-thinking template adds <think>\n as the generation prompt, so n_instruction
+        # covers everything up to (and including) the opening <think>\n token.
         instruction_text = tokenizer.apply_chat_template(
             [{"role": "user", "content": _format_input(row["question"], row["essay"], row["component"])}],
-            tokenize=False, add_generation_prompt=True, enable_thinking=False,
+            tokenize=False, add_generation_prompt=True,
         )
         n_instruction = len(tokenizer.encode(instruction_text, add_special_tokens=False))
 
         # Full sequence (instruction + assistant response).
+        # qwen3-thinking template preserves <think>...</think> blocks in assistant messages,
+        # unlike the default template which strips them when enable_thinking=False.
         if has_feedback and row.get("feedback_text"):
             clean = re.sub(r"<score>[^<]*</score>\s*", "", row["feedback_text"], flags=re.IGNORECASE)
             clean = re.sub(r"<confidence>[^<]*</confidence>\s*", "", clean, flags=re.IGNORECASE).strip()
@@ -640,7 +646,7 @@ def _build_dataset(df, tokenizer, max_len: int = 2048):
                 {"role": "user", "content": _format_input(row["question"], row["essay"], row["component"])},
                 {"role": "assistant", "content": assistant_content},
             ],
-            tokenize=False, add_generation_prompt=False, enable_thinking=False,
+            tokenize=False, add_generation_prompt=False,
         )
         full_ids = tokenizer.encode(full_text, add_special_tokens=False)[:max_len]
 
