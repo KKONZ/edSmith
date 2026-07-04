@@ -301,9 +301,9 @@ class _ScoringTrainer:
                             break
                 i += 1
 
-        # CE — all labeled tokens, with think tokens downweighted by think_weight.
-        # Non-think labeled tokens (score digit, <|im_end|>) receive full CE so the
-        # model learns to emit a bare integer then stop, not a fraction + explanation.
+        # CE — separate normalisation for think vs non-think tokens so that
+        # changing feedback length doesn't silently rescale the score-token gradient.
+        # think_weight scales the think-CE term; non-think tokens always get weight 1.0.
         shift_logits = logits[:, :-1].contiguous()
         shift_labels = labels[:, 1:].contiguous()
         shift_think = think_mask[:, 1:].contiguous()
@@ -314,12 +314,16 @@ class _ScoringTrainer:
             reduction="none",
             ignore_index=-100,
         ).view(B, L - 1)
-        # think_weight for think tokens, 1.0 for non-think labeled tokens
-        token_weights = shift_think * self._think_weight + (1.0 - shift_think)
         labeled_mask = (shift_labels != -100).float()
-        n_labeled = labeled_mask.sum().clamp(min=1)
-        ce_loss = (ce_per_token * token_weights * labeled_mask).sum() / n_labeled
-        n_think = shift_think.sum().clamp(min=1)
+        think_labeled = shift_think * labeled_mask
+        nothink_labeled = (1.0 - shift_think) * labeled_mask
+        n_think = think_labeled.sum().clamp(min=1)
+        n_nothink = nothink_labeled.sum().clamp(min=1)
+        # Each component normalised independently so neither dominates based on length.
+        ce_loss = (
+            self._think_weight * (ce_per_token * think_labeled).sum() / n_think
+            + (ce_per_token * nothink_labeled).sum() / n_nothink
+        )
 
         # CORN — ordinal regression on score token positions only
         corn_loss = logits.new_zeros(())

@@ -70,6 +70,8 @@ class ScorerConfig(BaseModel):
     per_device_train_batch_size: int = 2
     gradient_accumulation_steps: int = 4
     component: Literal["task_response", "coherence", "lexical", "grammar"] | None = None
+    think_weight: float = 0.0
+    score_weight: float = 1.0
 
 
 class SessionConfig(BaseModel):

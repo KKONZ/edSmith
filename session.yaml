@@ -45,6 +45,7 @@ scorer:
   lora_r: 16
   max_seq_length: 2048
   max_steps: 1000
+  think_weight: 0.1
   model_name: unsloth/Qwen3-4B-Thinking-2507
   per_device_train_batch_size: 2
 session_id: null

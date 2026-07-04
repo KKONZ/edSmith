@@ -1,5 +1,5 @@
 import pandas as pd
-df = pd.read_parquet(r"C:\Users\karlk\Repos\edSmith\edsmith_drive\sessions\a2727200-a740-4f8a-8f18-17cd1f227aff\feedback_iter0.parquet")
+df = pd.read_parquet(r"C:\Users\karlk\Repos\edSmith\edsmith_drive\sessions\03eb2c74-6d44-44e0-a5ba-ef85c6d6f3c2\feedback_iter1.parquet")
 print(df.columns.tolist())
 print(df.head(8))
 print(df.iloc[0]['feedback_text'])
