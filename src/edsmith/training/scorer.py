@@ -113,7 +113,10 @@ def evaluate(
 
     if len(component_dirs) == 1:
         comp, path = next(iter(component_dirs.items()))
-        return _evaluate(path, data_path, component=comp, enable_thinking=enable_thinking)
+        # Honour no_think saved in the model dir's edsmith_config.json.
+        edsmith_cfg = json.loads((Path(path) / "edsmith_config.json").read_text()) if (Path(path) / "edsmith_config.json").exists() else {}
+        effective_thinking = enable_thinking and not edsmith_cfg.get("no_think", False)
+        return _evaluate(path, data_path, component=comp, enable_thinking=effective_thinking)
 
     # Multi-component: evaluate each model, average predictions per essay
     import pandas as pd
@@ -398,17 +401,20 @@ def _train(feedback_path: str, cfg: dict, output_dir: str) -> str:
         r=cfg["lora_r"],
         lora_alpha=cfg["lora_alpha"],
         target_modules=["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
-        lora_dropout=0.0,
+        lora_dropout=cfg.get("lora_dropout", 0.0),
         bias="none",
         use_gradient_checkpointing="unsloth",
     )
     _log(f"LoRA applied. hidden_size={model.config.hidden_size}")
 
-    dataset = _build_dataset(df, tokenizer, max_len=cfg.get("max_seq_length", 2048))
+    dataset = _build_dataset(df, tokenizer, max_len=cfg.get("max_seq_length", 2048), no_think=cfg.get("no_think", False))
     _log(f"Dataset ready ({len(dataset)} items). Building trainer …")
 
     think_weight = cfg.get("think_weight", 0.0)
     score_weight = cfg.get("score_weight", 1.0)
+    if cfg.get("no_think") and think_weight != 0.0:
+        _log(f"WARNING: think_weight={think_weight} ignored because no_think=True")
+        think_weight = 0.0
     _log(f"Loss weights — think: {think_weight}  score: {score_weight}")
 
     from transformers import DataCollatorForSeq2Seq
@@ -446,7 +452,7 @@ def _train(feedback_path: str, cfg: dict, output_dir: str) -> str:
     out.mkdir(parents=True, exist_ok=True)
     model.save_pretrained(str(out))
     tokenizer.save_pretrained(str(out))
-    (out / "edsmith_config.json").write_text(json.dumps({"component": cfg.get("component")}))
+    (out / "edsmith_config.json").write_text(json.dumps({"component": cfg.get("component"), "no_think": cfg.get("no_think", False)}))
     _log(f"Saved to {out}")
     return str(out)
 
@@ -600,7 +606,7 @@ def _parse_score_from_ids(new_ids: list[int], end_think_id: int, band_tok_ids: l
 # Dataset helpers
 # ------------------------------------------------------------------
 
-def _build_dataset(df, tokenizer, max_len: int = 2048):
+def _build_dataset(df, tokenizer, max_len: int = 2048, no_think: bool = False):
     from datasets import Dataset
 
     has_feedback = "feedback_text" in df.columns
@@ -642,7 +648,11 @@ def _build_dataset(df, tokenizer, max_len: int = 2048):
         # Full sequence (instruction + assistant response).
         # qwen3-thinking template preserves <think>...</think> blocks in assistant messages,
         # unlike the default template which strips them when enable_thinking=False.
-        if has_feedback and row.get("feedback_text"):
+        if no_think:
+            # Score-only ablation: immediately close the think block so training
+            # mirrors the enable_thinking=False eval path (no reasoning chain).
+            assistant_content = f"</think>\n{score_str}"
+        elif has_feedback and row.get("feedback_text"):
             clean = re.sub(r"<score>[^<]*</score>\s*", "", row["feedback_text"], flags=re.IGNORECASE)
             clean = re.sub(r"<confidence>[^<]*</confidence>\s*", "", clean, flags=re.IGNORECASE).strip()
             assistant_content = f"<think>\n{clean}\n</think>\n{score_str}"

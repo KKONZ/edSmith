@@ -39,13 +39,14 @@ strategy_guidance:
 scorer:
   component: coherence
   gradient_accumulation_steps: 4
-  learning_rate: 0.0002
+  learning_rate: 0.00005
   load_in_4bit: true
   lora_alpha: 16
+  lora_dropout: 0.05
   lora_r: 16
   max_seq_length: 2048
-  max_steps: 1000
-  think_weight: 0.1
+  max_steps: 250
+  no_think: true
   model_name: unsloth/Qwen3-4B-Thinking-2507
   per_device_train_batch_size: 2
 session_id: null
