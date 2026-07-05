@@ -159,16 +159,12 @@ def _parse_band_val(val) -> float | None:
 def _corn_logits_from_vocab(logits_at_pos, class_tok_ids: list[int]):
     """Derive CORN logits from vocabulary logits — no projection head.
 
-    Uses the full softmax so band-token probabilities reflect true model
-    uncertainty (non-band probability mass is not discarded).  The band
-    sub-distribution is then renormalised to sum to 1 before computing
-    conditional log-odds P(class > k | class >= k) for each k.
+    Extracts the softmax distribution over `class_tok_ids` tokens, then
+    converts to conditional log-odds P(class > k | class >= k) for each k.
     Gradient flows directly through the vocabulary logits; no new parameters.
     """
     import torch
-    p_full = torch.softmax(logits_at_pos, dim=0)              # [V] — full vocab
-    p_band = p_full[class_tok_ids]                             # [C] — raw band probs
-    p = p_band / p_band.sum().clamp(min=1e-7)                 # [C] — renormalised
+    p = torch.softmax(logits_at_pos[class_tok_ids], dim=0)   # [C]
     cumsum = p.cumsum(0)                                       # P(class <= k)
     p_gt = 1.0 - cumsum[:-1]                                  # P(class > k), [C-1]
     p_ge = torch.cat([p.new_ones(1), 1.0 - cumsum[:-2]])     # P(class >= k), [C-1]
