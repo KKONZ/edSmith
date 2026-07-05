@@ -74,6 +74,7 @@ class ScorerConfig(BaseModel):
     no_think: bool = False
     think_weight: float = 0.0
     score_weight: float = 1.0
+    score_only_ce: bool = False
 
 
 class SessionConfig(BaseModel):

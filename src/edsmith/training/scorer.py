@@ -217,16 +217,18 @@ class _ScoringTrainer:
 
     _think_weight: float
     _score_weight: float
+    _score_only_ce: bool
     _think_id: int
     _end_id: int
     _int_band_tok_ids: list[int]          # token IDs for "4".."9"
     _band_seq_to_int_class: dict          # tuple(tok_ids) → int class 0–5
     _corn: _CornLoss
 
-    def _init_scoring(self, tokenizer, think_weight: float, score_weight: float) -> None:
+    def _init_scoring(self, tokenizer, think_weight: float, score_weight: float, score_only_ce: bool = False) -> None:
         import torch.nn.functional as F  # noqa: F401 — trigger import check
         self._think_weight = think_weight
         self._score_weight = score_weight
+        self._score_only_ce = score_only_ce
         self._corn = _CornLoss(num_classes=6)  # 6 bands: 4..9
 
         think_ids = tokenizer.encode("<think>", add_special_tokens=False)
@@ -263,6 +265,7 @@ class _ScoringTrainer:
         logits = outputs.logits  # [B, L, V]
 
         think_mask = torch.zeros(B, L, device=labels.device)  # 1.0 for think-block tokens only
+        score_mask = torch.zeros(B, L, device=labels.device)  # 1.0 at score token positions only
         corn_logit_list: list = []
         corn_target_list: list[int] = []
         n_labeled_total = 0
@@ -294,6 +297,7 @@ class _ScoringTrainer:
                     for seq, int_class in self._band_seq_to_int_class.items():
                         end = i + len(seq)
                         if end <= L and tuple(ids[i:end]) == seq:
+                            score_mask[b, i] = 1.0
                             if i > 0:
                                 corn_logit_list.append(
                                     _corn_logits_from_vocab(logits[b, i - 1], self._int_band_tok_ids)
@@ -304,12 +308,10 @@ class _ScoringTrainer:
                             break
                 i += 1
 
-        # CE — separate normalisation for think vs non-think tokens so that
-        # changing feedback length doesn't silently rescale the score-token gradient.
-        # think_weight scales the think-CE term; non-think tokens always get weight 1.0.
         shift_logits = logits[:, :-1].contiguous()
         shift_labels = labels[:, 1:].contiguous()
         shift_think = think_mask[:, 1:].contiguous()
+        shift_score = score_mask[:, 1:].contiguous()
 
         ce_per_token = F.cross_entropy(
             shift_logits.view(-1, logits.size(-1)),
@@ -317,31 +319,40 @@ class _ScoringTrainer:
             reduction="none",
             ignore_index=-100,
         ).view(B, L - 1)
-        labeled_mask = (shift_labels != -100).float()
-        think_labeled = shift_think * labeled_mask
-        nothink_labeled = (1.0 - shift_think) * labeled_mask
-        n_think = think_labeled.sum().clamp(min=1)
-        n_nothink = nothink_labeled.sum().clamp(min=1)
-        # Each component normalised independently so neither dominates based on length.
-        ce_loss = (
-            self._think_weight * (ce_per_token * think_labeled).sum() / n_think
-            + (ce_per_token * nothink_labeled).sum() / n_nothink
-        )
 
-        # CORN — ordinal regression on score token positions only
-        corn_loss = logits.new_zeros(())
-        if corn_logit_list:
-            corn_logits = torch.stack(corn_logit_list)  # [N, 8]
-            corn_targets = torch.tensor(corn_target_list, device=labels.device)
-            corn_loss = self._corn(corn_logits, corn_targets)
+        if self._score_only_ce:
+            # CE only at the score token position — no CORN, no reasoning chain gradient.
+            n_score = shift_score.sum().clamp(min=1)
+            ce_loss = (ce_per_token * shift_score).sum() / n_score
+            corn_loss = logits.new_zeros(())
+        else:
+            # CE — separate normalisation for think vs non-think tokens so that
+            # changing feedback length doesn't silently rescale the score-token gradient.
+            # think_weight scales the think-CE term; non-think tokens always get weight 1.0.
+            labeled_mask = (shift_labels != -100).float()
+            think_labeled = shift_think * labeled_mask
+            nothink_labeled = (1.0 - shift_think) * labeled_mask
+            n_think = think_labeled.sum().clamp(min=1)
+            n_nothink = nothink_labeled.sum().clamp(min=1)
+            ce_loss = (
+                self._think_weight * (ce_per_token * think_labeled).sum() / n_think
+                + (ce_per_token * nothink_labeled).sum() / n_nothink
+            )
+            # CORN — ordinal regression on score token positions only
+            corn_loss = logits.new_zeros(())
+            if corn_logit_list:
+                corn_logits = torch.stack(corn_logit_list)  # [N, 8]
+                corn_targets = torch.tensor(corn_target_list, device=labels.device)
+                corn_loss = self._corn(corn_logits, corn_targets)
 
         total = ce_loss + self._score_weight * corn_loss
 
         step = getattr(self, "state", None)
         step_n = step.global_step if step is not None else -1
         if step_n % 20 == 0:
+            mode = "score_only_ce" if self._score_only_ce else f"think_w={self._think_weight}"
             print(
-                f"[loss@{step_n}] CE={ce_loss.item():.4f} (think_w={self._think_weight})  "
+                f"[loss@{step_n}] CE={ce_loss.item():.4f} ({mode})  "
                 f"CORN={corn_loss.item():.4f} (×{self._score_weight})  "
                 f"total={total.item():.4f}  "
                 f"labeled={n_labeled_total} think={n_think_labeled} scores_found={n_score_found}",
@@ -412,10 +423,11 @@ def _train(feedback_path: str, cfg: dict, output_dir: str) -> str:
 
     think_weight = cfg.get("think_weight", 0.0)
     score_weight = cfg.get("score_weight", 1.0)
+    score_only_ce = cfg.get("score_only_ce", False)
     if cfg.get("no_think") and think_weight != 0.0:
         _log(f"WARNING: think_weight={think_weight} ignored because no_think=True")
         think_weight = 0.0
-    _log(f"Loss weights — think: {think_weight}  score: {score_weight}")
+    _log(f"Loss weights — think: {think_weight}  score: {score_weight}  score_only_ce: {score_only_ce}")
 
     from transformers import DataCollatorForSeq2Seq
 
@@ -443,7 +455,7 @@ def _train(feedback_path: str, cfg: dict, output_dir: str) -> str:
         train_dataset=dataset,
         data_collator=data_collator,
     )
-    trainer._init_scoring(tokenizer, think_weight=think_weight, score_weight=score_weight)
+    trainer._init_scoring(tokenizer, think_weight=think_weight, score_weight=score_weight, score_only_ce=score_only_ce)
     _log("Starting training …")
     trainer.train()
     _log("Training complete. Saving model …")
