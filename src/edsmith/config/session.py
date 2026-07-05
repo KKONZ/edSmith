@@ -73,7 +73,7 @@ class ScorerConfig(BaseModel):
     lora_dropout: float = 0.0
     no_think: bool = False
     think_weight: float = 0.0
-    score_weight: float = 1.0
+    score_weight: float = 0.1
     score_only_ce: bool = False
 
 
