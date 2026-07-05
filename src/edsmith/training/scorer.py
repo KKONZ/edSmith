@@ -321,10 +321,9 @@ class _ScoringTrainer:
         ).view(B, L - 1)
 
         if self._score_only_ce:
-            # CE only at the score token position — no CORN, no reasoning chain gradient.
+            # CE focused on score token only — strong direct classification signal.
             n_score = shift_score.sum().clamp(min=1)
             ce_loss = (ce_per_token * shift_score).sum() / n_score
-            corn_loss = logits.new_zeros(())
         else:
             # CE — separate normalisation for think vs non-think tokens so that
             # changing feedback length doesn't silently rescale the score-token gradient.
@@ -338,12 +337,15 @@ class _ScoringTrainer:
                 self._think_weight * (ce_per_token * think_labeled).sum() / n_think
                 + (ce_per_token * nothink_labeled).sum() / n_nothink
             )
-            # CORN — ordinal regression on score token positions only
-            corn_loss = logits.new_zeros(())
-            if corn_logit_list:
-                corn_logits = torch.stack(corn_logit_list)  # [N, 8]
-                corn_targets = torch.tensor(corn_target_list, device=labels.device)
-                corn_loss = self._corn(corn_logits, corn_targets)
+
+        # CORN — ordinal regulariser on score token positions, applied in both CE modes.
+        # CE provides the strong direct signal; CORN shapes the ordinal distribution on top.
+        # score_weight=0 disables CORN entirely.
+        corn_loss = logits.new_zeros(())
+        if corn_logit_list and self._score_weight > 0:
+            corn_logits = torch.stack(corn_logit_list)  # [N, C-1]
+            corn_targets = torch.tensor(corn_target_list, device=labels.device)
+            corn_loss = self._corn(corn_logits, corn_targets)
 
         total = ce_loss + self._score_weight * corn_loss
 
