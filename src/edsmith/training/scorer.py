@@ -1,4 +1,4 @@
-"""Scorer training and evaluation — Qwen3 + LoRA + CORN loss.
+"""Scorer training and evaluation — Qwen3 + LoRA + ordinal soft-label CE.
 
 GPU-only. Install [training] extras before importing:
     pip install -e ".[training]"
@@ -153,64 +153,30 @@ def _parse_band_val(val) -> float | None:
 
 
 # ------------------------------------------------------------------
-# Custom loss: weighted CE for thinking tokens + headless CORN for score
+# Custom loss: weighted CE for thinking tokens + ordinal soft-label CE for score
 # ------------------------------------------------------------------
 
-def _corn_logits_from_vocab(logits_at_pos, class_tok_ids: list[int]):
-    """Derive CORN logits from vocabulary logits — no projection head.
+def _ordinal_soft_ce(logits_at_pos, class_tok_ids: list[int], true_class: int):
+    """Ordinal label smoothing via soft-target CE over band token logits.
 
-    Extracts the softmax distribution over `class_tok_ids` tokens, then
-    converts to conditional log-odds P(class > k | class >= k) for each k.
-    Gradient flows directly through the vocabulary logits; no new parameters.
+    Gaussian centred on true_class with sigma = (K-1)/3, so 3σ spans the full
+    class range and every class gets a distinct weight. Gradient = softmax -
+    soft_target, bounded in [-1, 1] — no cumsum chain, no logit-transform
+    amplification.
     """
     import torch
-    p = torch.softmax(logits_at_pos[class_tok_ids], dim=0)   # [C]
-    cumsum = p.cumsum(0)                                       # P(class <= k)
-    p_gt = 1.0 - cumsum[:-1]                                  # P(class > k), [C-1]
-    p_ge = torch.cat([p.new_ones(1), 1.0 - cumsum[:-2]])     # P(class >= k), [C-1]
-    cond = (p_gt / p_ge.clamp(min=1e-7)).clamp(1e-7, 1.0 - 1e-7)
-    return torch.log(cond) - torch.log(1.0 - cond)           # [C-1]
-
-
-class _CornLoss:
-    """CORN: Conditional Ordinal Regression for Neural networks.
-
-    Mirrors coral_pytorch.losses.corn_loss — conditional subsets per task,
-    BCE aggregated and normalised by total examples across tasks.
-    """
-
-    def __init__(self, num_classes: int) -> None:
-        self.num_classes = num_classes
-
-    def __call__(self, logits, targets):
-        import torch
-        import torch.nn.functional as F
-
-        # Build (mask, binary_label) pairs for each ordinal threshold task.
-        # Task i keeps examples where class >= i (y > i-1) and labels whether class > i.
-        sets = []
-        for i in range(self.num_classes - 1):
-            label_mask = targets > i - 1
-            label_tensor = (targets[label_mask] > i).to(torch.int64)
-            sets.append((label_mask, label_tensor))
-
-        num_examples = 0
-        losses = 0.0
-        for task_index, (train_examples, train_labels) in enumerate(sets):
-            if len(train_labels) < 1:
-                continue
-            num_examples += len(train_labels)
-            pred = logits[train_examples, task_index]
-            log_sigmoid = F.logsigmoid(pred)
-            losses += -torch.sum(
-                log_sigmoid * train_labels + (log_sigmoid - pred) * (1 - train_labels)
-            )
-
-        return losses / num_examples
+    import torch.nn.functional as F
+    K = len(class_tok_ids)
+    sigma = (K - 1) / 3
+    class_logits = logits_at_pos[class_tok_ids]  # [K]
+    idx = torch.arange(K, device=class_logits.device, dtype=class_logits.dtype)
+    weights = torch.exp(-0.5 * ((idx - true_class) / sigma) ** 2)
+    soft_targets = weights / weights.sum()
+    return -(soft_targets * F.log_softmax(class_logits, dim=0)).sum()
 
 
 class _ScoringTrainer:
-    """Mixin — provides compute_loss with thinking down-weighting + headless CORN.
+    """Mixin — provides compute_loss with thinking down-weighting + ordinal soft-label CE.
 
     Usage: subclass SFTTrainer with this mixin, or swap in after importing.
     """
@@ -222,14 +188,12 @@ class _ScoringTrainer:
     _end_id: int
     _int_band_tok_ids: list[int]          # token IDs for "4".."9"
     _band_seq_to_int_class: dict          # tuple(tok_ids) → int class 0–5
-    _corn: _CornLoss
 
     def _init_scoring(self, tokenizer, think_weight: float, score_weight: float, score_only_ce: bool = False) -> None:
         import torch.nn.functional as F  # noqa: F401 — trigger import check
         self._think_weight = think_weight
         self._score_weight = score_weight
         self._score_only_ce = score_only_ce
-        self._corn = _CornLoss(num_classes=6)  # 6 bands: 4..9
 
         think_ids = tokenizer.encode("<think>", add_special_tokens=False)
         end_ids = tokenizer.encode("</think>", add_special_tokens=False)
@@ -242,7 +206,7 @@ class _ScoringTrainer:
         self._int_band_tok_ids = [
             tokenizer.encode(str(i), add_special_tokens=False)[0] for i in range(4, 10)
         ]
-        # Map integer score strings "4"-"9" → CORN class 0–5.
+        # Map integer score strings "4"-"9" → ordinal class index 0–5.
         # Sub-4 bands are collapsed to "4" in _to_chat; 4.0/4.5 both → "4" → class 0.
         self._band_seq_to_int_class = {
             tuple(tokenizer.encode(str(i), add_special_tokens=False)): i - 4
@@ -266,8 +230,8 @@ class _ScoringTrainer:
 
         think_mask = torch.zeros(B, L, device=labels.device)  # 1.0 for think-block tokens only
         score_mask = torch.zeros(B, L, device=labels.device)  # 1.0 at score token positions only
-        corn_logit_list: list = []
-        corn_target_list: list[int] = []
+        ordinal_logit_list: list = []   # logits[b, i-1] at each score position
+        ordinal_target_list: list[int] = []
         n_labeled_total = 0
         n_think_labeled = 0
         n_score_found = 0
@@ -299,10 +263,8 @@ class _ScoringTrainer:
                         if end <= L and tuple(ids[i:end]) == seq:
                             score_mask[b, i] = 1.0
                             if i > 0:
-                                corn_logit_list.append(
-                                    _corn_logits_from_vocab(logits[b, i - 1], self._int_band_tok_ids)
-                                )
-                                corn_target_list.append(int_class)
+                                ordinal_logit_list.append(logits[b, i - 1])
+                                ordinal_target_list.append(int_class)
                                 n_score_found += 1
                             found_score = True
                             break
@@ -322,8 +284,14 @@ class _ScoringTrainer:
 
         if self._score_only_ce:
             # CE focused on score token only — strong direct classification signal.
+            # think_weight optionally adds CE on the reasoning chain (for thinking mode).
             n_score = shift_score.sum().clamp(min=1)
             ce_loss = (ce_per_token * shift_score).sum() / n_score
+            if self._think_weight > 0:
+                labeled_mask = (shift_labels != -100).float()
+                think_labeled = shift_think * labeled_mask
+                n_think = think_labeled.sum().clamp(min=1)
+                ce_loss = ce_loss + self._think_weight * (ce_per_token * think_labeled).sum() / n_think
         else:
             # CE — separate normalisation for think vs non-think tokens so that
             # changing feedback length doesn't silently rescale the score-token gradient.
@@ -338,16 +306,19 @@ class _ScoringTrainer:
                 + (ce_per_token * nothink_labeled).sum() / n_nothink
             )
 
-        # CORN — ordinal regulariser on score token positions, applied in both CE modes.
-        # CE provides the strong direct signal; CORN shapes the ordinal distribution on top.
-        # score_weight=0 disables CORN entirely.
-        corn_loss = logits.new_zeros(())
-        if corn_logit_list and self._score_weight > 0:
-            corn_logits = torch.stack(corn_logit_list)  # [N, C-1]
-            corn_targets = torch.tensor(corn_target_list, device=labels.device)
-            corn_loss = self._corn(corn_logits, corn_targets)
+        # Ordinal soft-label CE — regulariser on score token positions.
+        # Gaussian soft targets centred on the true band give adjacent bands partial
+        # credit, encoding ordinal structure with bounded, well-calibrated gradients.
+        # score_weight=0 disables it entirely.
+        ord_loss = logits.new_zeros(())
+        if ordinal_logit_list and self._score_weight > 0:
+            ord_losses = torch.stack([
+                _ordinal_soft_ce(l, self._int_band_tok_ids, t)
+                for l, t in zip(ordinal_logit_list, ordinal_target_list)
+            ])
+            ord_loss = ord_losses.mean()
 
-        total = ce_loss + self._score_weight * corn_loss
+        total = ce_loss + self._score_weight * ord_loss
 
         step = getattr(self, "state", None)
         step_n = step.global_step if step is not None else -1
@@ -355,7 +326,7 @@ class _ScoringTrainer:
             mode = "score_only_ce" if self._score_only_ce else f"think_w={self._think_weight}"
             print(
                 f"[loss@{step_n}] CE={ce_loss.item():.4f} ({mode})  "
-                f"CORN={corn_loss.item():.4f} (×{self._score_weight})  "
+                f"ord={ord_loss.item():.4f} (×{self._score_weight})  "
                 f"total={total.item():.4f}  "
                 f"labeled={n_labeled_total} think={n_think_labeled} scores_found={n_score_found}",
                 flush=True,
@@ -364,7 +335,7 @@ class _ScoringTrainer:
         return (total, outputs) if return_outputs else total
 
     def training_step(self, model, inputs, num_items_in_batch=None):
-        """Override to ensure our CORN compute_loss drives backprop, not Unsloth's CE."""
+        """Override to ensure our compute_loss drives backprop, not Unsloth's CE."""
         model.train()
         inputs = self._prepare_inputs(inputs)
         loss = self.compute_loss(model, inputs)
