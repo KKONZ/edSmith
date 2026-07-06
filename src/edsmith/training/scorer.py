@@ -157,22 +157,23 @@ def _parse_band_val(val) -> float | None:
 # ------------------------------------------------------------------
 
 def _ordinal_soft_ce(logits_at_pos, class_tok_ids: list[int], true_class: int):
-    """Ordinal label smoothing via soft-target CE over band token logits.
+    """Adjacent-band ordinal credit using full-vocabulary log probabilities.
 
-    Gaussian centred on true_class with sigma = (K-1)/3, so 3σ spans the full
-    class range and every class gets a distinct weight. Gradient = softmax -
-    soft_target, bounded in [-1, 1] — no cumsum chain, no logit-transform
-    amplification.
+    Gaussian weights centred on true_class (sigma = (K-1)/3) with the correct
+    class zeroed out, so this term only nudges adjacent bands upward. Uses the
+    full vocabulary partition — same as score_only_ce — so there is no
+    restricted-softmax gradient conflict with CE on the correct class.
     """
     import torch
-    import torch.nn.functional as F
     K = len(class_tok_ids)
     sigma = (K - 1) / 3
-    class_logits = logits_at_pos[class_tok_ids]  # [K]
-    idx = torch.arange(K, device=class_logits.device, dtype=class_logits.dtype)
-    weights = torch.exp(-0.5 * ((idx - true_class) / sigma) ** 2)
-    soft_targets = weights / weights.sum()
-    return -(soft_targets * F.log_softmax(class_logits, dim=0)).sum()
+    idx = torch.arange(K, device=logits_at_pos.device, dtype=logits_at_pos.dtype)
+    adj_weights = torch.exp(-0.5 * ((idx - true_class) / sigma) ** 2)
+    adj_weights[true_class] = 0.0
+    adj_weights = adj_weights / adj_weights.sum().clamp(min=1e-7)
+    lse = torch.logsumexp(logits_at_pos, dim=0)
+    log_p_bands = logits_at_pos[class_tok_ids] - lse  # [K], full-vocab log probs
+    return -(adj_weights * log_p_bands).sum()
 
 
 class _ScoringTrainer:
